@@ -7,6 +7,12 @@
 *.lock
 *.pid
 
+# AI runtime (memória evolutiva SQLite — não versionar)
+dashboard/backend/data/
+*.db
+*.db-wal
+*.db-shm
+
 # Segredos
 *.env
 !**/.env.example

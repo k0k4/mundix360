@@ -25,6 +25,7 @@ import {
   NodeIndexOutlined,
   FileTextOutlined,
   CloudServerOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import "@refinedev/antd/dist/reset.css";
 
@@ -42,6 +43,7 @@ import { DomainsPage } from "./pages/content/domains";
 import { FlowsPage } from "./pages/flows";
 import { LogsPage } from "./pages/logs";
 import { ServicesPage } from "./pages/system/services";
+import { AssistantPage } from "./pages/assistant";
 
 const Title = ({ collapsed }: { collapsed: boolean }) => (
   <Brand collapsed={collapsed} />
@@ -78,6 +80,11 @@ export default function App() {
               name: "overview",
               list: "/",
               meta: { label: "Visão Geral", icon: <DashboardOutlined /> },
+            },
+            {
+              name: "assistant",
+              list: "/assistant",
+              meta: { label: "Mundix AI", icon: <RobotOutlined /> },
             },
             {
               name: "alerts",
@@ -190,6 +197,8 @@ export default function App() {
               }
             >
               <Route index element={<Overview />} />
+
+              <Route path="/assistant" element={<AssistantPage />} />
 
               <Route path="/siem">
                 <Route index element={<AlertList />} />

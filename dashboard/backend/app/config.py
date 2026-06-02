@@ -1,8 +1,13 @@
+from pydantic import Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="MUNDIX_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="MUNDIX_",
+        env_file=("/opt/mundix360/.env", ".env"),
+        extra="ignore",
+    )
 
     # API
     api_host: str = "127.0.0.1"
@@ -30,6 +35,21 @@ class Settings(BaseSettings):
     dnsmasq_etc_dir: str = "/etc/dnsmasq.d"
     dhcp_leases_file: str = "/var/lib/misc/dnsmasq.leases"
     content_blocklist_file: str = "/etc/dnsmasq.d/mundix-content-block.conf"
+
+    # AI assistant (Qwen3.7-Max via DashScope, OpenAI-compatible)
+    dashscope_api_key: str = Field(
+        "", validation_alias=AliasChoices("DASHSCOPE_API_KEY", "MUNDIX_DASHSCOPE_API_KEY")
+    )
+    ai_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    ai_model: str = "qwen3.7-max"
+    ai_max_tokens: int = 1536
+    ai_max_tool_iters: int = 8
+    ai_request_timeout: int = 120
+    ai_master_password: str = Field(
+        "", validation_alias=AliasChoices("MUNDIX_AI_MASTER_PASSWORD", "AI_MASTER_PASSWORD")
+    )
+    ai_db_path: str = "/opt/mundix360/dashboard/backend/data/ai.db"
+    ai_editable_root: str = "/opt/mundix360"
 
     @property
     def cors_list(self) -> list[str]:

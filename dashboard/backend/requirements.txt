@@ -5,3 +5,4 @@ clickhouse-connect==0.8.11
 pydantic==2.10.4
 pydantic-settings==2.7.1
 python-multipart==0.0.20
+openai>=1.40

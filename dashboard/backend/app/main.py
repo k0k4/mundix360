@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .security import require_auth
 from .routers import (
+    ai,
     alerts,
     content,
     firewall,
@@ -25,12 +26,19 @@ from .routers import (
     overview,
     system,
 )
+from .services.ai import memory as ai_memory
 
 app = FastAPI(
     title="Mundix Security 360 — Dashboard API",
     version="1.0.0",
     description="Unified security management & visibility API.",
 )
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    ai_memory.init_db()
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,7 +55,7 @@ def health():
 
 
 _protected = [Depends(require_auth)]
-for r in (overview, alerts, firewall, network, content, flows, logs, system):
+for r in (overview, alerts, firewall, network, content, flows, logs, system, ai):
     app.include_router(r.router, dependencies=_protected)
 
 
