@@ -16,6 +16,21 @@ from openai import AsyncOpenAI
 
 from ...config import settings
 from . import knowledge, memory, tools
+from .mask import Masker
+
+import re
+
+# Longest trailing substring that could still be an *incomplete* placeholder
+# (e.g. "AL", "ALVO_", "ALVO_1" which may grow to "ALVO_12"); held back until the
+# placeholder is provably complete so streaming unmask never emits a partial.
+_PARTIAL_PH = re.compile(r"A|AL|ALV|ALVO|ALVO_\d*")
+
+
+def _held_len(s: str) -> int:
+    for start in range(max(0, len(s) - 24), len(s)):
+        if _PARTIAL_PH.fullmatch(s[start:]):
+            return len(s) - start
+    return 0
 
 _client: AsyncOpenAI | None = None
 
@@ -35,6 +50,49 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _is_moderation(err: Exception) -> bool:
+    """True when DashScope/Model Studio content moderation rejected the turn."""
+    s = str(err).lower()
+    return (
+        "data_inspection_failed" in s
+        or "data_inspection" in s
+        or "inappropriate content" in s
+        or "inappropriate" in s and "content" in s
+    )
+
+
+# Human label per tool for the server-composed confirmation when the model's
+# prose is censored by moderation but the action itself already ran.
+_ACTION_LABELS = {
+    "block_ip": "IP bloqueado no firewall",
+    "unblock_ip": "IP desbloqueado",
+    "add_port_rule": "regra de porta aplicada",
+    "block_domain": "domínio adicionado à blocklist de conteúdo",
+    "unblock_domain": "domínio removido da blocklist",
+    "manage_zone": "zona/VLAN atualizada",
+    "manage_reservation": "reserva DHCP atualizada",
+    "service_action": "ação de serviço executada",
+}
+
+
+def _moderation_message(executed: list[str]) -> str:
+    if executed:
+        done = "; ".join(executed)
+        return (
+            "\n\n✅ Ação concluída: " + done + ".\n\n"
+            "_Observação: o filtro de conteúdo da Alibaba (Model Studio) interrompeu "
+            "o texto da resposta ao detectar um termo sensível, mas a operação acima "
+            "foi aplicada com sucesso no sistema. Veja os cartões de ferramenta acima "
+            "para os detalhes exatos._"
+        )
+    return (
+        "\n\n⚠️ O filtro de conteúdo da Alibaba (Model Studio) bloqueou a resposta por "
+        "detectar um termo sensível (ex.: nome de site adulto). Esse filtro não pode ser "
+        "desativado no provedor. Você ainda pode realizar a ação: tente reformular sem "
+        "citar o termo explícito, ou use o painel correspondente diretamente."
+    )
+
+
 def _build_messages(conversation_id: str) -> list[dict[str, Any]]:
     msgs: list[dict[str, Any]] = [
         {"role": "system", "content": knowledge.build_system_prompt()}
@@ -43,12 +101,15 @@ def _build_messages(conversation_id: str) -> list[dict[str, Any]]:
     return msgs
 
 
-async def _stream_turn(messages: list[dict[str, Any]]):
+async def _stream_turn(messages: list[dict[str, Any]], masker: Masker):
     """One model call. Yields ('token', text) for content and returns the
-    accumulated (content, tool_calls) via StopAsyncIteration value."""
+    accumulated (content, tool_calls) via StopAsyncIteration value.
+
+    `messages` are masked (placeholders) before being sent; streamed content is
+    unmasked back to real values for the operator."""
     stream = await client().chat.completions.create(
         model=settings.ai_model,
-        messages=messages,
+        messages=masker.mask_messages(messages),
         tools=tools.TOOLS,
         max_tokens=settings.ai_max_tokens,
         stream=True,
@@ -59,6 +120,7 @@ async def _stream_turn(messages: list[dict[str, Any]]):
     tool_calls: dict[int, dict[str, Any]] = {}
     finish = None
     usage = None
+    pending = ""  # raw masked content not yet safe to unmask+emit
 
     async for chunk in stream:
         if chunk.usage:
@@ -75,7 +137,11 @@ async def _stream_turn(messages: list[dict[str, Any]]):
         # final answer text only (never reasoning_content)
         if getattr(delta, "content", None):
             content_parts.append(delta.content)
-            yield ("token", delta.content)
+            pending += delta.content
+            hold = _held_len(pending)
+            safe, pending = pending[: len(pending) - hold], pending[len(pending) - hold:]
+            if safe:
+                yield ("token", masker.unmask(safe))
         # accumulate tool calls by index
         for tc in getattr(delta, "tool_calls", None) or []:
             slot = tool_calls.setdefault(
@@ -88,6 +154,9 @@ async def _stream_turn(messages: list[dict[str, Any]]):
             if tc.function and tc.function.arguments:
                 slot["arguments"] += tc.function.arguments
 
+    if pending:
+        yield ("token", masker.unmask(pending))
+
     ordered = [tool_calls[i] for i in sorted(tool_calls)]
     yield ("_final", {"content": "".join(content_parts), "tool_calls": ordered,
                       "finish": finish, "usage": usage})
@@ -99,6 +168,9 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
     memory.touch_conversation(conversation_id)
     messages = _build_messages(conversation_id)
 
+    masker = Masker()
+    executed: list[str] = []  # human labels of operational actions applied this turn
+
     try:
         for _ in range(settings.ai_max_tool_iters):
             content = ""
@@ -106,12 +178,15 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
             usage = None
             finish = None
 
-            async for kind, payload in _stream_turn(messages):
+            async for kind, payload in _stream_turn(messages, masker):
                 if kind == "token":
                     yield _sse("token", {"text": payload})
                 elif kind == "_final":
-                    content = payload["content"]
+                    # model output is in placeholder space -> restore real values
+                    content = masker.unmask(payload["content"])
                     tool_calls = payload["tool_calls"]
+                    for tc in tool_calls:
+                        tc["arguments"] = masker.unmask(tc.get("arguments") or "")
                     finish = payload["finish"]
                     usage = payload["usage"]
 
@@ -168,6 +243,16 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
 
                 yield _sse("tool_result", {"name": name, "result": result})
 
+                # Track successfully applied operational actions so we can confirm
+                # them even if the model's summary is later censored by moderation.
+                if (
+                    name in _ACTION_LABELS
+                    and isinstance(result, dict)
+                    and not result.get("error")
+                    and not result.get("blocked")
+                ):
+                    executed.append(_ACTION_LABELS[name])
+
                 tool_msg_content = json.dumps(result, ensure_ascii=False)
                 memory.add_message(conversation_id, "tool", content=tool_msg_content,
                                    tool_call_id=tc["id"], name=name)
@@ -179,12 +264,12 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
 
             if paused:
                 # Let the model summarise, then stop and wait for the operator.
-                async for kind, payload in _stream_turn(messages):
+                async for kind, payload in _stream_turn(messages, masker):
                     if kind == "token":
                         yield _sse("token", {"text": payload})
                     elif kind == "_final" and payload["content"]:
                         memory.add_message(conversation_id, "assistant",
-                                           content=payload["content"])
+                                           content=masker.unmask(payload["content"]))
                 yield _sse("awaiting_confirmation", {})
                 yield _sse("done", {})
                 return
@@ -193,5 +278,14 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
         yield _sse("done", {})
     except Exception as e:
         from . import safety
+
+        if _is_moderation(e):
+            msg = _moderation_message(executed)
+            # Persist a clean note (never the censored content) so history stays usable.
+            memory.add_message(conversation_id, "assistant", content=msg.strip())
+            yield _sse("token", {"text": msg})
+            yield _sse("done", {})
+            return
+
         yield _sse("error", {"message": safety.redact(str(e)) or "erro no agente"})
         yield _sse("done", {})
