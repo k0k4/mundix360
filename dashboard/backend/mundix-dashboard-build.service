@@ -1,0 +1,14 @@
+[Unit]
+Description=Mundix360 Dashboard frontend build (Refine SPA -> dist)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/mundix360/dashboard
+ExecStart=/usr/bin/env bash /opt/mundix360/dashboard/build.sh
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,8 @@
 [Unit]
 Description=Mundix360 Dashboard API (FastAPI)
-After=network.target clickhouse-server.service
+After=network.target clickhouse-server.service mundix-dashboard-build.service
 Wants=clickhouse-server.service
+Requires=mundix-dashboard-build.service
 
 [Service]
 Type=simple
