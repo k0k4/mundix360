@@ -13,9 +13,21 @@ dashboard/
 │       ├── security.py       auth Bearer opcional
 │       ├── routers/          overview, alerts, firewall, network, content, flows, logs, system
 │       └── services/         clickhouse, metrics(VM), loki, firewall(nft), network(dnsmasq), content, system, shell
-└── frontend/         Next.js 14 + Tailwind + componentes shadcn-style
-    └── src/app/      /, /siem, /firewall, /network, /content, /flows, /logs, /system
+└── frontend/         Vite + React + Refine + Ant Design (SPA com CRUD completo)
+    └── src/
+        ├── App.tsx          Refine: resources, rotas, tema (dark)
+        ├── dataProvider.ts  mapeia recursos Refine → API FastAPI existente
+        └── pages/           overview, alerts, firewall/*, network/*, content, flows, logs, system
 ```
+
+> A SPA é compilada para `frontend/dist/` e **servida pelo próprio FastAPI** (StaticFiles +
+> fallback SPA). Resultado: **um único serviço e uma única porta** (`8099`) — produto unificado.
+
+## Stack
+
+- **Backend:** FastAPI (Python 3.12) — API REST + operações privilegiadas (nft, dnsmasq, systemctl).
+- **Frontend:** [Refine](https://refine.dev) (MIT) + Ant Design — framework headless de admin com
+  CRUD pronto (hooks, formulários, tabelas, notificações), tema escuro corporativo.
 
 ## Módulos
 
@@ -23,12 +35,15 @@ dashboard/
 |--------|----------------|-------------|
 | Visão Geral | tudo | KPIs, saúde de serviços, recursos do host |
 | SIEM / Alertas | ClickHouse `akvorado.siem_alerts` | timeline, filtros, severidade |
-| **Firewall** | nftables | **blocklist de IP** (add/remove), **regras de porta** (add/remove), **ruleset** completo |
-| Rede / VLANs | dnsmasq + leases | zonas LAN/DMZ/IoT, concessões DHCP |
-| Filtro de Conteúdo | dnsmasq sinkhole | bloqueio de domínios (0.0.0.0) |
+| **Firewall** | nftables | **blocklist de IP** (criar/excluir), **regras de porta** (criar/excluir), **ruleset** completo |
+| Rede / VLANs | dnsmasq + leases | **zonas/VLANs CRUD**, **reservas DHCP CRUD**, concessões DHCP ativas |
+| Filtro de Conteúdo | dnsmasq sinkhole | **bloqueio de domínios CRUD** (criar/editar nota/excluir) |
 | Fluxos | ClickHouse `akvorado.flows` | volume, top origens/destinos |
 | Logs | Loki | suricata, dnsmasq, busca LogQL |
-| Sistema | systemd + /proc | serviços, CPU/mem/disco |
+| Sistema | systemd + /proc | serviços, **controle (start/stop/restart/reload)**, CPU/mem/disco |
+
+> Toda gestão (criar / editar / excluir) é feita **pelo próprio painel**. Alterações em dnsmasq
+> são validadas com `dnsmasq --test` e revertidas automaticamente (rollback) em caso de erro.
 
 ## Segurança
 
@@ -39,15 +54,18 @@ dashboard/
 
 ## Execução
 
+### Build do frontend
+```bash
+cd frontend && npm install && npm run build   # gera frontend/dist (servido pela API)
+```
+
 ### Via systemd (produção)
 ```bash
 sudo cp backend/mundix-dashboard-api.service /etc/systemd/system/
-sudo cp frontend/mundix-dashboard-web.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now mundix-dashboard-api mundix-dashboard-web
+sudo systemctl enable --now mundix-dashboard-api
 ```
-- API:  http://127.0.0.1:8099  (docs: `/docs`)
-- Web:  http://127.0.0.1:3001
+- App + API: http://127.0.0.1:8099  (API docs: `/docs`)
 
 ### Desenvolvimento
 ```bash
@@ -55,11 +73,12 @@ sudo systemctl enable --now mundix-dashboard-api mundix-dashboard-web
 cd backend && /opt/venv/bin/pip install -r requirements.txt
 /opt/venv/bin/python -m uvicorn app.main:app --reload --port 8099
 
-# frontend
-cd frontend && npm install && npm run dev
+# frontend (Vite dev server com proxy /api → 8099)
+cd frontend && npm install && npm run dev   # http://127.0.0.1:5273
 ```
 
 ## Configuração
 
 Backend: copie `backend/.env.example` para `backend/.env`.
-Frontend: usa `MUNDIX_API_BASE` (default `http://127.0.0.1:8099`) para o proxy `/api/*`.
+Frontend: opcional `VITE_API_TOKEN` (Bearer) se o backend exigir `MUNDIX_API_TOKEN`.
+O `/api/*` é servido pela mesma origem em produção; em dev o Vite faz proxy para `:8099`.

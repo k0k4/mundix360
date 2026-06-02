@@ -28,6 +28,15 @@ def add_domain(req: DomainRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.put("/blocklist/{domain}")
+def update_domain(domain: str, req: DomainRequest):
+    try:
+        # add_domain is idempotent (overwrites note for existing domain)
+        return content.add_domain(domain, req.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.delete("/blocklist/{domain}")
 def remove_domain(domain: str):
     return content.remove_domain(domain)

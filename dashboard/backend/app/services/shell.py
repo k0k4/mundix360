@@ -19,6 +19,7 @@ ALLOWED_BINARIES = {
     "ip",
     "ss",
     "dig",
+    "dnsmasq",
     "df",
     "free",
     "uptime",

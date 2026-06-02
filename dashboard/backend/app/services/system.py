@@ -33,6 +33,21 @@ def all_services() -> list[dict[str, Any]]:
     return [service_status(s) for s in PLATFORM_SERVICES]
 
 
+def control_service(name: str, action: str) -> dict[str, Any]:
+    if name not in PLATFORM_SERVICES:
+        raise ValueError(f"unknown service: {name}")
+    if action not in {"restart", "reload", "start", "stop", "reload-or-restart"}:
+        raise ValueError(f"invalid action: {action}")
+    res = shell.run(["systemctl", action, name], timeout=30)
+    return {
+        "ok": res.ok,
+        "name": name,
+        "action": action,
+        "stderr": res.stderr.strip(),
+        "status": service_status(name),
+    }
+
+
 def host_metrics() -> dict[str, Any]:
     # CPU load
     load1 = load5 = load15 = 0.0

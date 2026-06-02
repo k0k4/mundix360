@@ -1,15 +1,24 @@
 """SIEM alerts API (ClickHouse akvorado.siem_alerts)."""
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from ..services import clickhouse
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 _ALLOWED_SORT = {"timestamp", "severity", "source", "category"}
+
+
+class TriageUpdate(BaseModel):
+    false_positive: int | None = None
+    triage_notes: str | None = None
+    action_taken: str | None = None
 
 
 @router.get("")
@@ -105,3 +114,61 @@ def top_talkers(hours: int = Query(24, ge=1, le=720), limit: int = Query(10, ge=
         "GROUP BY src_ip ORDER BY count DESC LIMIT {limit:UInt32}", params,
     )
     return {"top_src_ips": src}
+
+
+def _alert_select(where: str) -> str:
+    return (
+        "SELECT toString(event_id) AS event_id, timestamp, source, source_type, "
+        "rule_id, rule_name, severity, category, mitre_tactic, mitre_technique, "
+        "src_ip, dst_ip, src_port, dst_port, protocol, hostname, user, "
+        "description, full_log, action_taken, false_positive, triage_notes, tags "
+        f"FROM siem_alerts WHERE {where} LIMIT 1"
+    )
+
+
+@router.get("/{event_id}")
+def get_alert(event_id: str):
+    rows = clickhouse.query(
+        _alert_select("siem_alerts.event_id = {eid:UUID}"), {"eid": event_id}
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="alert not found")
+    return rows[0]
+
+
+@router.patch("/{event_id}")
+def update_triage(event_id: str, body: TriageUpdate):
+    rows = clickhouse.query(
+        "SELECT count() AS c FROM siem_alerts WHERE event_id = {eid:UUID}",
+        {"eid": event_id},
+    )
+    if not rows or int(rows[0]["c"]) == 0:
+        raise HTTPException(status_code=404, detail="alert not found")
+
+    sets: list[str] = []
+    params: dict[str, Any] = {"eid": event_id}
+    if body.false_positive is not None:
+        sets.append("false_positive = {fp:UInt8}")
+        params["fp"] = 1 if body.false_positive else 0
+    if body.action_taken is not None:
+        sets.append("action_taken = {act:String}")
+        params["act"] = body.action_taken
+    if body.triage_notes is not None:
+        notes = json.dumps(
+            {
+                "manual_note": body.triage_notes,
+                "edited_at": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+        )
+        sets.append("triage_notes = {notes:String}")
+        params["notes"] = notes
+
+    if not sets:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    clickhouse.command(
+        f"ALTER TABLE siem_alerts UPDATE {', '.join(sets)} WHERE event_id = {{eid:UUID}}",
+        params,
+    )
+    return {"ok": True, "event_id": event_id}

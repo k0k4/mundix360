@@ -12,10 +12,13 @@
 !**/.env.example
 configs/openrouter.env
 
-# Node / Next.js
+# Node / Vite / Next.js
 node_modules/
 .next/
 out/
+dist/
+.vite/
+*.tsbuildinfo
 npm-debug.log*
 
 # Python

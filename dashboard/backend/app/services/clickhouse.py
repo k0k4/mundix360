@@ -27,6 +27,10 @@ def query(sql: str, parameters: dict[str, Any] | None = None) -> list[dict[str, 
     return [dict(zip(cols, row)) for row in result.result_rows]
 
 
+def command(sql: str, parameters: dict[str, Any] | None = None) -> None:
+    _client().command(sql, parameters=parameters or {})
+
+
 def ping() -> bool:
     try:
         _client().query("SELECT 1")
