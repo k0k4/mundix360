@@ -1,0 +1,34 @@
+http:
+  listen: :8081
+  profiler: false
+  cache:
+    type: memory
+
+flow:
+  inputs:
+    - decapsulationprotocol: none
+      decoder: netflow
+      listen: :2055
+      ratelimit: 0
+      receivebuffer: 0
+      timestampsource: input
+      type: udp
+      usesrcaddrforexporteraddr: false
+      workers: 4
+    - decapsulationprotocol: none
+      decoder: sflow
+      listen: :6343
+      ratelimit: 0
+      receivebuffer: 0
+      timestampsource: input
+      type: udp
+      usesrcaddrforexporteraddr: false
+      workers: 4
+
+kafka:
+  topic: akvorado-flows
+  brokers:
+    - 127.0.0.1:9092
+  compressioncodec: lz4
+  queuesize: 4096
+  loadbalance: random

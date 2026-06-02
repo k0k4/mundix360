@@ -1,0 +1,292 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "mappings": []
+        }, "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "value", "textMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto" },
+      "title": "Total Alerts (24h)",
+      "type": "stat",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT count() AS total FROM akvorado.siem_alerts WHERE timestamp > now() - INTERVAL 24 HOUR",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] },
+          "mappings": []
+        }, "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "value", "textMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto" },
+      "title": "Critical Alerts (severity ≥ 8)",
+      "type": "stat",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT count() AS critical FROM akvorado.siem_alerts WHERE timestamp > now() - INTERVAL 24 HOUR AND severity >= 8",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] },
+          "mappings": []
+        }, "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": { "colorMode": "value", "textMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto" },
+      "title": "IPs Blocked (24h)",
+      "type": "stat",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT uniqExact(src_ip) AS blocked FROM akvorado.siem_alerts WHERE timestamp > now() - INTERVAL 24 HOUR AND severity >= 8 AND src_ip != ''",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "mappings": []
+        }, "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": { "colorMode": "value", "textMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto" },
+      "title": "Unique Sources (24h)",
+      "type": "stat",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT uniqExact(src_ip) AS sources FROM akvorado.siem_alerts WHERE timestamp > now() - INTERVAL 24 HOUR AND src_ip != ''",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "Alerts",
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "stacking": { "mode": "normal" }
+          },
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "severity 1" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "severity 2" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "severity 4" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "severity 5" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "severity 6" }, "properties": [{ "id": "color", "value": { "fixedColor": "semi-dark-red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "severity 8" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "severity 9" }, "properties": [{ "id": "color", "value": { "fixedColor": "dark-red", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
+      "id": 5,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Alert Timeline by Severity",
+      "type": "timeseries",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT\n  toStartOfInterval(timestamp, INTERVAL 5 MINUTE) AS time,\n  concat('severity ', toString(severity)) AS metric,\n  count() AS value\nFROM akvorado.siem_alerts\nGROUP BY time, severity\nORDER BY time",
+        "format": "time_series"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bargauge",
+            "fillOpacity": 80
+          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short",
+          "mappings": []
+        }, "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 6,
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "legend": { "displayMode": "list", "placement": "right" } },
+      "title": "Top 10 Attackers",
+      "type": "bargauge",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT\n  src_ip AS `Top Attackers`,\n  count() AS alerts\nFROM akvorado.siem_alerts\nWHERE src_ip != ''\nGROUP BY src_ip\nORDER BY alerts DESC\nLIMIT 10",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "hideFrom": { "tooltip": false, "viz": false, "legend": false } },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        }, "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 7,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "displayLabels": ["percent"]
+      },
+      "title": "Alerts by MITRE Tactic",
+      "type": "piechart",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT\n  if(mitre_tactic = '', 'Unclassified', mitre_tactic) AS tactic,\n  count() AS count\nFROM akvorado.siem_alerts\nGROUP BY tactic\nORDER BY count DESC",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "hideFrom": { "tooltip": false, "viz": false, "legend": false } },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        }, "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 20 },
+      "id": 8,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "pie",
+        "displayLabels": ["percent"]
+      },
+      "title": "Alerts by Source",
+      "type": "piechart",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT source AS source_type_name, count() AS count FROM akvorado.siem_alerts GROUP BY source ORDER BY count DESC",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "hideFrom": { "tooltip": false, "viz": false, "legend": false } },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        }, "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 20 },
+      "id": 11,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "displayLabels": ["percent"]
+      },
+      "title": "Alerts by Category",
+      "type": "piechart",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT if(category = '', 'Unclassified', category) AS cat, count() AS count FROM akvorado.siem_alerts GROUP BY cat ORDER BY count DESC",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "yellow", "value": null }, { "color": "red", "value": 8 }] },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }
+        }, "overrides": [
+          { "matcher": { "id": "byName", "options": "severity" }, "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-text" } }] },
+          { "matcher": { "id": "byName", "options": "timestamp" }, "properties": [{ "id": "custom.width", "value": 200 }] },
+          { "matcher": { "id": "byName", "options": "rule_name" }, "properties": [{ "id": "custom.width", "value": 250 }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 20 },
+      "id": 9,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "timestamp", "desc": true }]
+      },
+      "title": "Recent Critical Alerts (severity ≥ 8)",
+      "type": "table",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT\n  timestamp,\n  src_ip,\n  rule_name,\n  severity,\n  mitre_technique,\n  description\nFROM akvorado.siem_alerts\nWHERE severity >= 8\nORDER BY timestamp DESC\nLIMIT 50",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false }
+        }, "overrides": [
+          { "matcher": { "id": "byName", "options": "severity" }, "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-text" } }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "yellow", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 8 }] } }] },
+          { "matcher": { "id": "byName", "options": "alert_count" }, "properties": [{ "id": "custom.width", "value": 110 }] },
+          { "matcher": { "id": "byName", "options": "max_severity" }, "properties": [{ "id": "custom.width", "value": 120 }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
+      "id": 10,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "max_severity", "desc": true }]
+      },
+      "title": "Alert Summary by Source IP",
+      "type": "table",
+      "targets": [{
+        "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" },
+        "rawSql": "SELECT\n  src_ip,\n  max(severity) AS max_severity,\n  count() AS alert_count,\n  groupUniqArray(rule_name) AS rules,\n  min(timestamp) AS first_seen,\n  max(timestamp) AS last_seen\nFROM akvorado.siem_alerts\nWHERE src_ip != '' AND timestamp > now() - INTERVAL 24 HOUR\nGROUP BY src_ip\nORDER BY max_severity DESC, alert_count DESC\nLIMIT 50",
+        "format": "table"
+      }],
+      "datasource": { "uid": "efnduhg0fj56oa", "type": "grafana-clickhouse-datasource" }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["mundix360", "siem", "security"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Mundix360 SIEM Dashboard",
+  "uid": "mundix360-siem",
+  "version": 1
+}

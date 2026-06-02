@@ -1,0 +1,43 @@
+http:
+  listen: :8090
+
+snmp:
+  name: fwmx
+  listen: :8161
+  interfaces:
+    1: ens18 (WAN1)
+    2: ens19 (LAN)
+    3: ens20 (DMZ)
+    4: ens21 (IoT)
+
+flows:
+  samplingrate: 100
+  target: 127.0.0.1:2055
+  seed: 42
+  flows:
+    - persecond: 10
+      inifindex: [1]
+      outifindex: [2]
+      peakhour: 14h
+      multiplier: 1.5
+      srcnet: 10.0.0.0/24
+      dstnet: 0.0.0.0/0
+      srcas: [64512]
+      dstas: [15169, 13335, 32934]
+      dstport: [80, 443]
+      protocol: [tcp, udp]
+      size: 512
+      reversedirectionratio: 0.5
+    - persecond: 5
+      inifindex: [2]
+      outifindex: [1]
+      peakhour: 14h
+      multiplier: 1.5
+      srcnet: 192.168.0.0/24
+      dstnet: 0.0.0.0/0
+      srcas: [64513]
+      dstas: [15169, 13335, 32934]
+      dstport: [443, 53, 80]
+      protocol: [tcp, udp]
+      size: 256
+      reversedirectionratio: 0.3

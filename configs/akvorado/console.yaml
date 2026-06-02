@@ -1,0 +1,57 @@
+http:
+  listen: :8000
+  profiler: false
+  cache:
+    type: memory
+
+defaultvisualizeoptions:
+  graphtype: stacked
+  start: 6 hours ago
+  end: now
+  filter: InIfBoundary = external
+  dimensions:
+    - SrcAS
+  limit: 10
+  limittype: avg
+  bidirectional: false
+  previousperiod: false
+
+homepagetopwidgets:
+  - src-as
+  - dst-as
+  - protocol
+  - src-country
+  - dst-country
+  - etype
+  - src-port
+  - dst-port
+
+homepagegraphfilter: InIfBoundary = 'external'
+homepagegraphtimerange: 24h
+
+dimensionslimit: 50
+
+clickhouse:
+  servers:
+    - 127.0.0.1:9000
+  database: akvorado
+  username: akvorado
+  password: akvorado_secret_2025
+  maxopenconns: 10
+  dialtimeout: 5s
+
+auth:
+  headers:
+    login: Remote-User
+    name: Remote-Name
+    email: Remote-Email
+    logouturl: X-Logout-URL
+    avatarurl: X-Avatar-URL
+  defaultuser:
+    login: admin
+    name: Administrator
+    email: ""
+
+database:
+  driver: sqlite
+  dsn: /opt/mundix360/data/akvorado/console.sqlite

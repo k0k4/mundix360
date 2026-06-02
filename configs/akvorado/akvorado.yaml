@@ -1,0 +1,11 @@
+kafka:
+  brokers:
+    - localhost:9092
+  topic: akvorado-flows
+
+clickhousedb:
+  servers:
+    - localhost:9000
+  username: akvorado
+  password: akvorado_secret_2025
+  database: akvorado

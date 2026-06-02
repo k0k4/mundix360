@@ -1,0 +1,15 @@
+[Unit]
+Description=Mundix360 Dashboard API (FastAPI)
+After=network.target clickhouse-server.service
+Wants=clickhouse-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mundix360/dashboard/backend
+EnvironmentFile=-/opt/mundix360/dashboard/backend/.env
+ExecStart=/opt/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8099
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

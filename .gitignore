@@ -1,0 +1,32 @@
+# Dados e binários (não versionar)
+/data/
+/bin/
+/logs/
+/secrets/
+*.leases
+*.lock
+*.pid
+
+# Segredos
+*.env
+!**/.env.example
+configs/openrouter.env
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Backups locais
+nftables.conf.backup.*
+
+# Sistema
+.DS_Store
+*.swp

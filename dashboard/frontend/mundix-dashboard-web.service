@@ -1,0 +1,16 @@
+[Unit]
+Description=Mundix360 Dashboard Web (Next.js)
+After=network.target mundix-dashboard-api.service
+Wants=mundix-dashboard-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mundix360/dashboard/frontend
+Environment=NODE_ENV=production
+Environment=MUNDIX_API_BASE=http://127.0.0.1:8099
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,117 @@
+http:
+  listen: :8082
+  profiler: false
+  cache:
+    type: memory
+
+metadata:
+  cacheduration: 30m
+  cacherefresh: 1h
+  cachecheckinterval: 2m
+  providers:
+    - type: static
+      exporters:
+        127.0.0.1:
+          name: fwmx
+          site: mundix
+          region: main
+          role: router
+          ifindexes:
+            1:
+              name: ens18
+              description: WAN1
+              speed: 1000
+            2:
+              name: ens19
+              description: LAN
+              speed: 1000
+            3:
+              name: ens20
+              description: DMZ
+              speed: 1000
+            4:
+              name: ens21
+              description: IoT
+              speed: 1000
+    - agents: {}
+      credentials:
+        ::/0:
+          communities:
+            - public
+      pollerretries: 1
+      pollertimeout: 1s
+      ports:
+        ::/0: 161
+      type: snmp
+
+routing:
+  provider:
+    collectasns: true
+    collectaspaths: true
+    collectcommunities: true
+    keep: 5m
+    listen: :10179
+    messagebuffer: 10000
+    rds: []
+    receivebuffer: 0
+    ribshards: 16
+    type: bmp
+
+kafka:
+  topic: akvorado-flows
+  brokers:
+    - 127.0.0.1:9092
+  consumergroup: akvorado-outlet
+  fetchminbytes: 1000000
+  fetchmaxwaittime: 1s
+  minworkers: 1
+  maxworkers: 8
+
+clickhousedb:
+  servers:
+    - 127.0.0.1:9000
+  database: akvorado
+  username: akvorado
+  password: akvorado_secret_2025
+  maxopenconns: 10
+  dialtimeout: 5s
+
+clickhouse:
+  graceperiod: 1m
+  maximumbatchsize: 50000
+  maximumwaittime: 5s
+
+core:
+  exporterclassifiers:
+    - ClassifySite("mundix") && ClassifyRegion("main") && ClassifyRole("router")
+
+  interfaceclassifiers:
+    - |
+      Interface.Name startsWith "ens18" &&
+      ClassifyConnectivity("wan") &&
+      ClassifyProvider("ISP") &&
+      ClassifyExternal()
+    - |
+      Interface.Name startsWith "ens19" &&
+      ClassifyConnectivity("lan") &&
+      ClassifyProvider("internal") &&
+      ClassifyInternal()
+    - |
+      Interface.Name startsWith "ens20" &&
+      ClassifyConnectivity("dmz") &&
+      ClassifyProvider("internal") &&
+      ClassifyInternal()
+    - |
+      Interface.Name startsWith "ens21" &&
+      ClassifyConnectivity("iot") &&
+      ClassifyProvider("internal") &&
+      ClassifyInternal()
+    - ClassifyExternal()
+
+  asnproviders:
+    - flow
+    - routing
+    - geo-ip
+  netproviders:
+    - flow
+    - routing

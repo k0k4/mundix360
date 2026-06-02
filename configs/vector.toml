@@ -1,0 +1,511 @@
+[api]
+enabled = true
+address = "127.0.0.1:9598"
+
+[sources.suricata_eve]
+type = "file"
+include = ["/var/log/suricata/eve.json"]
+read_from = "beginning"
+
+[sources.dnsmasq_log]
+type = "file"
+include = ["/var/log/dnsmasq/dnsmasq.log"]
+read_from = "beginning"
+
+[transforms.suricata_enrich]
+type = "remap"
+inputs = ["suricata_eve"]
+source = '''
+., _ = merge(., parse_json!(.message))
+.message_type = .event_type
+.zone = "wan"
+.enriched = true
+'''
+
+[transforms.dnsmasq_enrich]
+type = "remap"
+inputs = ["dnsmasq_log"]
+source = '''
+.source_type = "dns"
+.zone = "internal"
+.enriched = true
+'''
+
+[sinks.loki_suricata]
+type = "loki"
+inputs = ["suricata_enrich"]
+endpoint = "http://127.0.0.1:3100"
+encoding.codec = "json"
+labels.job = "suricata"
+labels.zone = "{{ zone }}"
+
+[sinks.loki_dnsmasq]
+type = "loki"
+inputs = ["dnsmasq_enrich"]
+endpoint = "http://127.0.0.1:3100"
+encoding.codec = "json"
+labels.job = "dnsmasq"
+labels.zone = "{{ zone }}"
+
+[sources.host_metrics]
+type = "host_metrics"
+collectors = ["cpu", "memory", "disk", "load", "network", "filesystem"]
+
+[transforms.suricata_alerts_filter]
+type = "filter"
+inputs = ["suricata_enrich"]
+condition = '.event_type == "alert"'
+
+[transforms.suricata_events_metrics]
+type = "log_to_metric"
+inputs = ["suricata_enrich"]
+
+[[transforms.suricata_events_metrics.metrics]]
+type = "counter"
+field = "event_type"
+name = "suricata_events_total"
+namespace = "mundix"
+tags.event_type = "{{ event_type }}"
+tags.zone = "wan"
+
+[transforms.suricata_alerts_metrics]
+type = "log_to_metric"
+inputs = ["suricata_alerts_filter"]
+
+[[transforms.suricata_alerts_metrics.metrics]]
+type = "counter"
+field = "alert.severity"
+name = "suricata_alerts_total"
+namespace = "mundix"
+tags.severity = "{{ alert.severity }}"
+
+[transforms.dnsmasq_metrics]
+type = "log_to_metric"
+inputs = ["dnsmasq_enrich"]
+
+[[transforms.dnsmasq_metrics.metrics]]
+type = "counter"
+field = "message"
+name = "dnsmasq_queries_total"
+namespace = "mundix"
+tags.zone = "internal"
+
+[sinks.victoriametrics]
+type = "prometheus_remote_write"
+inputs = ["suricata_events_metrics", "suricata_alerts_metrics", "dnsmasq_metrics", "host_metrics"]
+endpoint = "http://127.0.0.1:8428/api/v1/write"
+healthcheck.uri = "http://127.0.0.1:8428/health"
+
+# ============================================================================
+# FAse 3 - SIEM (Vector-native)
+# ============================================================================
+
+# --- Sources ---
+[sources.auditd_log]
+type = "file"
+include = ["/var/log/audit/audit.log"]
+read_from = "beginning"
+
+[sources.auth_log]
+type = "file"
+include = ["/var/log/auth.log"]
+read_from = "beginning"
+
+# --- Transforms ---
+[transforms.auditd_parse]
+type = "remap"
+inputs = ["auditd_log"]
+source = '''
+. = merge(., parse_key_value!(.message, "=", " "))
+msg_clean = replace!(.msg, "audit(", "")
+msg_clean = replace(msg_clean, "):", "")
+msg_parts = split(msg_clean, ":")
+.timestamp_epoch = to_float!(msg_parts[0]) * 1000
+if exists(.success) {
+  .audit_success = (.success == "yes")
+}
+.source_type = "auditd"
+if exists(.key) {
+  .category = .key
+} else {
+  .category = "audit"
+}
+type_str = "UNKNOWN"
+if exists(.type) {
+  type_str = to_string!(.type)
+}
+key_str = "-"
+if exists(.key) {
+  key_str = to_string!(.key)
+}
+.description = "Audit event: type=" + type_str + " key=" + key_str
+del(.log)
+del(.file)
+'''
+
+[transforms.auth_log_parse]
+type = "remap"
+inputs = ["auth_log"]
+source = '''
+parsed, err = parse_syslog(.message)
+if err == null {
+  . = merge(., parsed)
+  .source_type = "auth"
+  if exists(.appname) {
+    .program = .appname
+  } else {
+    .program = "auth"
+  }
+  .message_text = .message
+}
+del(.log)
+del(.file)
+'''
+
+[transforms.suricata_siem]
+type = "remap"
+inputs = ["suricata_alerts_filter"]
+source = '''
+.source = "suricata"
+.source_type = "ids"
+if exists(.alert.signature_id) {
+  .rule_id = to_string!(.alert.signature_id)
+} else {
+  .rule_id = ""
+}
+if exists(.alert.signature) {
+  .rule_name = to_string!(.alert.signature)
+} else {
+  .rule_name = ""
+}
+if exists(.alert.severity) {
+  .severity = to_int!(.alert.severity)
+} else {
+  .severity = 3
+}
+if exists(.alert.category) {
+  .category = to_string!(.alert.category)
+} else {
+  .category = ""
+}
+if exists(.src_ip) {
+  .src_ip = to_string!(.src_ip)
+} else {
+  .src_ip = ""
+}
+if exists(.dest_ip) {
+  .dst_ip = to_string!(.dest_ip)
+} else {
+  .dst_ip = ""
+}
+if exists(.src_port) {
+  .src_port = to_int!(.src_port)
+} else {
+  .src_port = 0
+}
+if exists(.dest_port) {
+  .dst_port = to_int!(.dest_port)
+} else {
+  .dst_port = 0
+}
+if exists(.proto) {
+  .protocol = to_string!(.proto)
+} else {
+  .protocol = ""
+}
+desc = "Suricata alert"
+if exists(.alert.signature) {
+  desc = desc + ": " + to_string!(.alert.signature)
+} else if exists(.alert.signature_id) {
+  desc = desc + ": " + to_string!(.alert.signature_id)
+}
+.description = desc
+.full_log = encode_json(.)
+if exists(.alert.category) {
+  cat = to_string!(.alert.category)
+  if cat == "Attempted Information Leak" {
+    .mitre_tactic = "Reconnaissance"
+    .mitre_technique = "T1595"
+  } else if cat == "A Network Trojan was detected" {
+    .mitre_tactic = "Command and Control"
+    .mitre_technique = "T1071"
+  } else if cat == "Misc activity" {
+    .mitre_tactic = "Discovery"
+    .mitre_technique = "T1046"
+  } else {
+    .mitre_tactic = ""
+    .mitre_technique = ""
+  }
+} else {
+  .mitre_tactic = ""
+  .mitre_technique = ""
+}
+'''
+
+[transforms.audit_siem]
+type = "remap"
+inputs = ["auditd_parse"]
+source = '''
+.source = "auditd"
+if exists(.key) {
+  .rule_id = "AUDIT-" + to_string!(.key)
+  .rule_name = "Audit: " + to_string!(.key)
+} else {
+  .rule_id = "AUDIT-GENERIC"
+  .rule_name = "Audit: generic-event"
+}
+.src_ip = ""
+.dst_ip = ""
+.src_port = 0
+.dst_port = 0
+.protocol = ""
+if exists(.description) {
+  .description = to_string!(.description)
+} else {
+  .description = "Audit event"
+}
+.full_log = encode_json(.)
+
+if .category == "identity" {
+  .severity = 6
+  .mitre_tactic = "Credential Access"
+  .mitre_technique = "T1078"
+} else if .category == "root_commands" {
+  .severity = 5
+  .mitre_tactic = "Privilege Escalation"
+  .mitre_technique = "T1548"
+} else if .category == "ssh_keys" || .category == "sensitive_read" {
+  .severity = 6
+  .mitre_tactic = "Credential Access"
+  .mitre_technique = "T1552"
+} else if .category == "modules" {
+  .severity = 7
+  .mitre_tactic = "Persistence"
+  .mitre_technique = "T1547"
+} else if .category == "firewall" || .category == "network_config" {
+  .severity = 8
+  .mitre_tactic = "Defense Evasion"
+  .mitre_technique = "T1562"
+} else if .category == "bin_modifications" {
+  .severity = 9
+  .mitre_tactic = "Persistence"
+  .mitre_technique = "T1543"
+} else {
+  .severity = 3
+  .mitre_tactic = ""
+  .mitre_technique = ""
+}
+
+if exists(.AUID) {
+  .user = to_string!(.AUID)
+} else if exists(.auid) {
+  .user = to_string!(.auid)
+} else if exists(.comm) {
+  .user = to_string!(.comm)
+} else {
+  .user = ""
+}
+'''
+
+[transforms.auth_siem]
+type = "remap"
+inputs = ["auth_log_parse"]
+source = '''
+.source = "auth"
+if exists(.program) {
+  .rule_id = "AUTH-" + to_string!(.program)
+} else {
+  .rule_id = "AUTH-generic"
+}
+.src_ip = ""
+.dst_ip = ""
+.src_port = 0
+.dst_port = 0
+.protocol = ""
+.full_log = encode_json(.)
+if exists(.user) {
+  .user = to_string!(.user)
+} else {
+  .user = ""
+}
+
+msg = ""
+if exists(.message_text) {
+  msg = to_string!(.message_text)
+}
+
+prog = ""
+if exists(.program) {
+  prog = to_string!(.program)
+}
+
+if (prog == "sshd" && (match(msg, r'Failed password') || match(msg, r'Invalid user'))) || match(msg, r'sshd.*Failed password') || match(msg, r'sshd.*Invalid user') {
+  .severity = 5
+  .source_type = "brute-force"
+  .rule_name = "SSH Failed Login"
+  .mitre_tactic = "Credential Access"
+  .mitre_technique = "T1110"
+  .src_ip = ""
+  ip_match, err = parse_regex(msg, r'(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})')
+  if err == null {
+    .src_ip = to_string!(ip_match.ip)
+  }
+  .category = "authentication-failure"
+} else if (prog == "sshd" && match(msg, r'Accepted')) || match(msg, r'sshd.*Accepted') {
+  .severity = 2
+  .source_type = "successful-auth"
+  .rule_name = "SSH Successful Login"
+  .mitre_tactic = ""
+  .mitre_technique = ""
+  .category = "authentication-success"
+} else if match(msg, r'su\[.*\]: Successful su for') || (match(prog, r'^su$') && match(msg, r'Successful su for')) {
+  .severity = 6
+  .source_type = "privesc"
+  .rule_name = "su escalation"
+  .mitre_tactic = "Privilege Escalation"
+  .mitre_technique = "T1548"
+  .category = "privilege-escalation"
+} else if match(msg, r'sudo') || prog == "sudo" {
+  .severity = 4
+  .source_type = "sudo"
+  .rule_name = "sudo usage"
+  .mitre_tactic = "Privilege Escalation"
+  .mitre_technique = "T1548.003"
+  .category = "privilege-escalation"
+} else {
+  .severity = 1
+  .source_type = "auth-info"
+  .rule_name = "Auth log entry"
+  .mitre_tactic = ""
+  .mitre_technique = ""
+  .category = "info"
+}
+
+.description = msg
+'''
+
+[transforms.siem_unified]
+type = "remap"
+inputs = ["suricata_siem", "audit_siem", "auth_siem"]
+source = '''
+if !exists(.timestamp) || .timestamp == null {
+  .timestamp = now()
+}
+if !exists(.hostname) || .hostname == null {
+  .hostname = get_hostname!()
+}
+.tags = []
+
+del(.message)
+del(.message_type)
+del(.zone)
+del(.enriched)
+del(.event_type)
+del(.appname)
+del(.program)
+del(.message_text)
+del(.AUID)
+del(.UID)
+del(.GID)
+del(.pid)
+del(.ppid)
+del(.comm)
+del(.exe)
+del(.name)
+del(.audit_success)
+del(.success)
+del(.ses)
+del(.auid)
+del(.uid)
+del(.gid)
+del(.euid)
+del(.suid)
+del(.fsuid)
+del(.egid)
+del(.sgid)
+del(.fsgid)
+del(.exit)
+del(.items)
+del(.ARCH)
+del(.SYSCALL)
+del(.key)
+'''
+
+[transforms.ssh_bruteforce_filter]
+type = "filter"
+inputs = ["siem_unified"]
+condition = '.source_type != null && to_string!(.source_type) == "brute-force" && .src_ip != null && to_string!(.src_ip) != ""'
+
+[transforms.ssh_bruteforce_count]
+type = "remap"
+inputs = ["ssh_bruteforce_filter"]
+source = '''
+.count = 1
+'''
+
+[transforms.ssh_bruteforce_correlate]
+type = "reduce"
+inputs = ["ssh_bruteforce_count"]
+group_by = ["src_ip"]
+expire_after_ms = 60000
+merge_strategies.count = "sum"
+
+[transforms.ssh_bruteforce_elevate]
+type = "remap"
+inputs = ["ssh_bruteforce_correlate"]
+source = '''
+count = to_int(.count) ?? 0
+if count >= 5 {
+  .severity = 8
+  .rule_name = "SSH Brute-force Detected"
+  .rule_id = "AUTH-BRUTEFORCE-CORRELATED"
+  .description = "SSH brute-force: " + to_string(count) + " failed logins in 60s"
+} else {
+  abort
+}
+'''
+
+[transforms.siem_critical]
+type = "filter"
+inputs = ["siem_unified", "ssh_bruteforce_elevate"]
+condition = '.severity != null && to_int!(.severity) >= 8'
+
+[transforms.siem_critical_ips]
+type = "remap"
+inputs = ["siem_critical"]
+source = '''
+if exists(.src_ip) {
+  .block_ip = to_string!(.src_ip)
+} else {
+  .block_ip = ""
+}
+.block_duration = 3600
+if exists(.rule_id) {
+  .block_reason = to_string!(.rule_id)
+} else {
+  .block_reason = "siem-trigger"
+}
+'''
+
+# --- Sinks: ClickHouse SIEM alerts ---
+[sinks.clickhouse_siem]
+type = "clickhouse"
+inputs = ["siem_unified", "ssh_bruteforce_elevate"]
+endpoint = "http://127.0.0.1:8123"
+database = "akvorado"
+table = "siem_alerts"
+auth.strategy = "basic"
+auth.user = "akvorado"
+auth.password = "akvorado_secret_2025"
+
+# --- Sinks: Active Response (file queue + path watcher) ---
+[sinks.active_response]
+type = "file"
+inputs = ["siem_critical_ips"]
+path = "/opt/mundix360/data/siem/blocklist/block-queue-%Y%m%d.jsonl"
+encoding.codec = "json"
+encoding.timestamp_format = "rfc3339"
+buffer.type = "memory"
+buffer.max_events = 1000
+buffer.when_full = "drop_newest"
+
