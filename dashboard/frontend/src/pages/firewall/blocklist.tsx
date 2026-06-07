@@ -13,6 +13,7 @@ import {
   message,
 } from "antd";
 import { PlusOutlined, StopOutlined } from "@ant-design/icons";
+import { ListTitle } from "../../components/ui";
 
 export const BlocklistPage = () => {
   const { tableProps } = useTable({
@@ -42,7 +43,11 @@ export const BlocklistPage = () => {
 
   return (
     <List
-      title="Firewall — Bloqueio de IP"
+      title={
+        <ListTitle eyebrow={<><StopOutlined /> Firewall</>}>
+          Bloqueio de IP
+        </ListTitle>
+      }
       headerButtons={
         <Button
           type="primary"

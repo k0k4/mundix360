@@ -1,5 +1,7 @@
 import { useCustom } from "@refinedev/core";
 import { Card, Collapse, Tag, Spin, Typography, Empty } from "antd";
+import { PartitionOutlined } from "@ant-design/icons";
+import { PageHeader } from "../../components/ui";
 
 const { Text } = Typography;
 
@@ -21,9 +23,15 @@ export const RulesetPage = () => {
 
   return (
     <div>
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
-        Firewall — Ruleset (nftables)
-      </Typography.Title>
+      <PageHeader
+        eyebrow={
+          <>
+            <PartitionOutlined /> nftables
+          </>
+        }
+        title="Ruleset do Firewall"
+        subtitle="Tabelas, chains e regras ativas no kernel"
+      />
       {tables.length === 0 && <Empty description="Nenhuma tabela" />}
       {tables.map((t: any) => (
         <Card
@@ -57,7 +65,7 @@ export const RulesetPage = () => {
                       className="mx-mono"
                       style={{
                         padding: "4px 8px",
-                        borderBottom: "1px solid #1f2a44",
+                        borderBottom: "1px solid var(--mx-border)",
                       }}
                     >
                       <Tag color="default">#{r.handle}</Tag> {r.expr}
