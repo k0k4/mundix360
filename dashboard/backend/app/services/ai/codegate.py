@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config import settings
-from . import safety
+from . import config_store, safety
 
 # pending change_id -> change dict
 _PENDING: dict[str, dict[str, Any]] = {}
@@ -99,9 +99,10 @@ def confirm(change_id: str, password: str) -> dict[str, Any]:
     """Verify the master password and apply the pending change. Raises on failure."""
     if _rate_limited():
         raise PermissionError("muitas tentativas; tente novamente em alguns minutos")
-    if not settings.ai_master_password:
+    if not config_store.master_password_set():
         raise PermissionError(
-            "MUNDIX_AI_MASTER_PASSWORD não configurada no .env — edição de código desabilitada"
+            "Senha mestra não configurada — defina-a em Mundix AI → Configuração "
+            "(ou MUNDIX_AI_MASTER_PASSWORD no .env) para habilitar a edição de código"
         )
     if not safety.password_ok(password):
         _FAILS.append(time.time())

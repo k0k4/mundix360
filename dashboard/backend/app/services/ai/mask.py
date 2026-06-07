@@ -92,3 +92,24 @@ class Masker:
                 mm["tool_calls"] = new_tcs
             out.append(mm)
         return out
+
+
+class NullMasker(Masker):
+    """Pass-through masker for when provider content moderation is not in play
+    (masking disabled in config). Keeps the same interface as Masker."""
+
+    @property
+    def active(self) -> bool:
+        return False
+
+    def mask(self, text: str | None) -> str | None:
+        return text
+
+    def unmask(self, text: str | None) -> str | None:
+        return text
+
+    def unmask_obj(self, obj: Any) -> Any:
+        return obj
+
+    def mask_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return messages

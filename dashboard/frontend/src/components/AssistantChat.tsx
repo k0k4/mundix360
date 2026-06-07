@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
-  Layout,
   Input,
   Button,
   Typography,
-  List,
   Avatar,
   Tag,
   Card,
@@ -19,8 +17,6 @@ import {
   RobotOutlined,
   UserOutlined,
   SendOutlined,
-  PlusOutlined,
-  DeleteOutlined,
   ToolOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -32,10 +28,10 @@ const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
 
 const TOKEN = import.meta.env.VITE_API_TOKEN as string | undefined;
-const authHeaders = (): Record<string, string> =>
+export const authHeaders = (): Record<string, string> =>
   TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 
-type ToolCard = {
+export type ToolCard = {
   kind: "tool";
   name: string;
   args: Record<string, unknown>;
@@ -43,7 +39,7 @@ type ToolCard = {
   ok?: boolean;
 };
 
-type CodeChange = {
+export type CodeChange = {
   kind: "code";
   id: string;
   path: string;
@@ -54,14 +50,12 @@ type CodeChange = {
   resolved?: "applied" | "skipped";
 };
 
-type ChatItem =
+export type ChatItem =
   | { kind: "text"; role: "user" | "assistant"; content: string }
   | ToolCard
   | CodeChange;
 
-type Conversation = { id: string; title: string; updated_at?: number };
-
-function ToolBlock({ item }: { item: ToolCard }) {
+export function ToolBlock({ item }: { item: ToolCard }) {
   const ok = item.ok;
   return (
     <Card
@@ -114,7 +108,7 @@ function ToolBlock({ item }: { item: ToolCard }) {
   );
 }
 
-function CodeChangeBlock({
+export function CodeChangeBlock({
   item,
   onConfirm,
 }: {
@@ -124,11 +118,7 @@ function CodeChangeBlock({
   return (
     <Card
       size="small"
-      style={{
-        background: "#1a1407",
-        borderColor: "#7c5e10",
-        marginBottom: 8,
-      }}
+      style={{ background: "#1a1407", borderColor: "#7c5e10", marginBottom: 8 }}
       styles={{ body: { padding: "10px 12px" } }}
     >
       <Space direction="vertical" size={6} style={{ width: "100%" }}>
@@ -170,29 +160,34 @@ function CodeChangeBlock({
         </pre>
         {item.resolved ? (
           <Tag color={item.resolved === "applied" ? "success" : "default"}>
-            {item.resolved === "applied"
-              ? "Aplicada e commitada"
-              : "Descartada"}
+            {item.resolved === "applied" ? "Aplicada e commitada" : "Descartada"}
           </Tag>
         ) : (
-          <Space>
-            <Button
-              type="primary"
-              icon={<LockOutlined />}
-              onClick={() => onConfirm(item)}
-            >
-              Aplicar (requer senha)
-            </Button>
-          </Space>
+          <Button
+            type="primary"
+            icon={<LockOutlined />}
+            onClick={() => onConfirm(item)}
+          >
+            Aplicar (requer senha)
+          </Button>
         )}
       </Space>
     </Card>
   );
 }
 
-export function AssistantPage() {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [cid, setCid] = useState<string | null>(null);
+export function AssistantChat({
+  context,
+  conversationId,
+  onConversationId,
+  emptyHint,
+}: {
+  context?: string;
+  conversationId?: string | null;
+  onConversationId?: (id: string) => void;
+  emptyHint?: string;
+}) {
+  const [cid, setCid] = useState<string | null>(conversationId ?? null);
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -200,23 +195,20 @@ export function AssistantPage() {
   const [password, setPassword] = useState("");
   const [confirming, setConfirming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  const loadConversations = useCallback(async () => {
-    const r = await fetch("/api/ai/conversations", { headers: authHeaders() });
-    const j = await r.json();
-    setConversations(j.conversations || []);
-  }, []);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    loadConversations();
-  }, [loadConversations]);
+    setCid(conversationId ?? null);
+  }, [conversationId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [items]);
 
-  const openConversation = useCallback(async (id: string) => {
-    setCid(id);
+  // Cancel any in-flight stream on unmount.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const loadMessages = useCallback(async (id: string) => {
     const r = await fetch(`/api/ai/conversations/${id}`, {
       headers: authHeaders(),
     });
@@ -234,20 +226,20 @@ export function AssistantPage() {
     setItems(msgs);
   }, []);
 
-  const newConversation = () => {
-    setCid(null);
-    setItems([]);
-  };
+  useEffect(() => {
+    if (conversationId) loadMessages(conversationId);
+    else setItems([]);
+  }, [conversationId, loadMessages]);
 
   const send = async () => {
     const text = input.trim();
     if (!text || streaming) return;
     setInput("");
-    setItems((prev) => [
-      ...prev,
-      { kind: "text", role: "user", content: text },
-    ]);
+    setItems((prev) => [...prev, { kind: "text", role: "user", content: text }]);
     setStreaming(true);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     let assistantBuf = "";
     const ensureAssistant = () => {
@@ -262,10 +254,7 @@ export function AssistantPage() {
           };
           return copy;
         }
-        return [
-          ...prev,
-          { kind: "text", role: "assistant", content: assistantBuf },
-        ];
+        return [...prev, { kind: "text", role: "assistant", content: assistantBuf }];
       });
     };
 
@@ -273,7 +262,12 @@ export function AssistantPage() {
       const resp = await fetch("/api/ai/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ conversation_id: cid, message: text }),
+        body: JSON.stringify({
+          conversation_id: cid,
+          message: text,
+          context: context || null,
+        }),
+        signal: controller.signal,
       });
       if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
 
@@ -289,7 +283,10 @@ export function AssistantPage() {
           /* ignore */
         }
         if (event === "meta" && data.conversation_id) {
-          if (!cid) setCid(data.conversation_id);
+          if (!cid) {
+            setCid(data.conversation_id);
+            onConversationId?.(data.conversation_id);
+          }
         } else if (event === "token") {
           assistantBuf += data.text || "";
           ensureAssistant();
@@ -304,7 +301,11 @@ export function AssistantPage() {
             const copy = [...prev];
             for (let i = copy.length - 1; i >= 0; i--) {
               const it = copy[i];
-              if (it.kind === "tool" && it.name === data.name && it.result === undefined) {
+              if (
+                it.kind === "tool" &&
+                it.name === data.name &&
+                it.result === undefined
+              ) {
                 const res = data.result;
                 copy[i] = {
                   ...it,
@@ -312,9 +313,7 @@ export function AssistantPage() {
                   ok:
                     res && typeof res === "object" && "ok" in res
                       ? Boolean((res as any).ok)
-                      : res &&
-                          typeof res === "object" &&
-                          "returncode" in res
+                      : res && typeof res === "object" && "returncode" in res
                         ? (res as any).returncode === 0
                         : true,
                 };
@@ -353,7 +352,8 @@ export function AssistantPage() {
           const dataLines: string[] = [];
           for (const ln of lines) {
             if (ln.startsWith("event:")) ev = ln.slice(6).trim();
-            else if (ln.startsWith("data:")) dataLines.push(ln.replace(/^data:\s?/, ""));
+            else if (ln.startsWith("data:"))
+              dataLines.push(ln.replace(/^data:\s?/, ""));
           }
           const dataStr = dataLines.join("\n").trim();
           if (dataStr) handleEvent(ev, dataStr);
@@ -361,10 +361,11 @@ export function AssistantPage() {
         if (done) break;
       }
     } catch (e: any) {
-      antdMessage.error(e?.message || "Falha na conexão");
+      if (e?.name !== "AbortError")
+        antdMessage.error(e?.message || "Falha na conexão");
     } finally {
       setStreaming(false);
-      loadConversations();
+      abortRef.current = null;
     }
   };
 
@@ -406,203 +407,138 @@ export function AssistantPage() {
     }
   };
 
-  const deleteConversation = async (id: string) => {
-    await fetch(`/api/ai/conversations/${id}`, {
-      method: "DELETE",
-      headers: authHeaders(),
-    });
-    if (id === cid) newConversation();
-    loadConversations();
-  };
-
   return (
-    <Layout
+    <div
       style={{
-        height: "calc(100vh - 120px)",
-        background: "transparent",
-        gap: 12,
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
       }}
     >
-      <Layout.Sider
-        width={250}
-        style={{
-          background: "#0e1830",
-          borderRadius: 10,
-          padding: 12,
-          overflow: "auto",
-        }}
-      >
-        <Button
-          block
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={newConversation}
-          style={{ marginBottom: 12 }}
-        >
-          Nova conversa
-        </Button>
-        <List
-          dataSource={conversations}
-          locale={{ emptyText: <Text type="secondary">Sem conversas</Text> }}
-          renderItem={(c) => (
-            <List.Item
-              style={{
-                cursor: "pointer",
-                padding: "8px 10px",
-                borderRadius: 8,
-                background: c.id === cid ? "#1c2c4d" : "transparent",
-                border: "none",
-              }}
-              onClick={() => openConversation(c.id)}
-              actions={[
-                <DeleteOutlined
-                  key="del"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteConversation(c.id);
-                  }}
-                  style={{ color: "#64748b" }}
-                />,
-              ]}
-            >
-              <Text
-                ellipsis
-                style={{ color: "#cbd5e1", fontSize: 13, maxWidth: 150 }}
-              >
-                {c.title || "Conversa"}
-              </Text>
-            </List.Item>
-          )}
-        />
-      </Layout.Sider>
-
-      <Layout style={{ background: "#0b1220", borderRadius: 10 }}>
-        <div
-          ref={scrollRef}
-          style={{ flex: 1, overflow: "auto", padding: 20 }}
-        >
-          {items.length === 0 ? (
-            <div
-              style={{
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Empty
-                image={
-                  <RobotOutlined
-                    style={{ fontSize: 56, color: "#1668dc" }}
-                  />
-                }
-                description={
-                  <Space direction="vertical" size={4}>
-                    <Text strong style={{ color: "#cbd5e1", fontSize: 16 }}>
-                      Mundix AI
-                    </Text>
-                    <Text type="secondary">
-                      Gestão por linguagem natural. Ex.: "Bloqueie o
-                      xvideos.com", "Mostre os alertas críticos de hoje",
-                      "Reinicie o suricata".
-                    </Text>
-                  </Space>
-                }
-              />
-            </div>
-          ) : (
-            items.map((it, idx) => {
-              if (it.kind === "tool")
-                return <ToolBlock key={idx} item={it} />;
-              if (it.kind === "code")
-                return (
-                  <CodeChangeBlock
-                    key={idx}
-                    item={it}
-                    onConfirm={(c) => {
-                      setPwModal(c);
-                      setPassword("");
-                    }}
-                  />
-                );
-              const isUser = it.role === "user";
+      <div ref={scrollRef} style={{ flex: 1, overflow: "auto", padding: 16 }}>
+        {items.length === 0 ? (
+          <div
+            style={{
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Empty
+              image={<RobotOutlined style={{ fontSize: 48, color: "#1668dc" }} />}
+              description={
+                <Space direction="vertical" size={4}>
+                  <Text strong style={{ color: "#cbd5e1", fontSize: 15 }}>
+                    Mundix AI
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {emptyHint ||
+                      'Ex.: "Bloqueie o xvideos.com", "Alertas críticos de hoje", "Reinicie o suricata".'}
+                  </Text>
+                </Space>
+              }
+            />
+          </div>
+        ) : (
+          items.map((it, idx) => {
+            if (it.kind === "tool") return <ToolBlock key={idx} item={it} />;
+            if (it.kind === "code")
               return (
-                <div
+                <CodeChangeBlock
                   key={idx}
+                  item={it}
+                  onConfirm={(c) => {
+                    setPwModal(c);
+                    setPassword("");
+                  }}
+                />
+              );
+            const isUser = it.role === "user";
+            return (
+              <div
+                key={idx}
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  marginBottom: 14,
+                  flexDirection: isUser ? "row-reverse" : "row",
+                }}
+              >
+                <Avatar
+                  icon={isUser ? <UserOutlined /> : <RobotOutlined />}
                   style={{
-                    display: "flex",
-                    gap: 10,
-                    marginBottom: 14,
-                    flexDirection: isUser ? "row-reverse" : "row",
+                    background: isUser ? "#334155" : "#1668dc",
+                    flexShrink: 0,
+                  }}
+                />
+                <div
+                  style={{
+                    maxWidth: "82%",
+                    background: isUser ? "#1c2c4d" : "#111a2e",
+                    border: "1px solid #1f3257",
+                    borderRadius: 10,
+                    padding: "8px 14px",
                   }}
                 >
-                  <Avatar
-                    icon={isUser ? <UserOutlined /> : <RobotOutlined />}
+                  <Paragraph
                     style={{
-                      background: isUser ? "#334155" : "#1668dc",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <div
-                    style={{
-                      maxWidth: "78%",
-                      background: isUser ? "#1c2c4d" : "#111a2e",
-                      border: "1px solid #1f3257",
-                      borderRadius: 10,
-                      padding: "8px 14px",
+                      margin: 0,
+                      color: "#e2e8f0",
+                      whiteSpace: "pre-wrap",
                     }}
                   >
-                    <Paragraph
-                      style={{
-                        margin: 0,
-                        color: "#e2e8f0",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {it.content || (streaming ? "…" : "")}
-                    </Paragraph>
-                  </div>
+                    {it.content || (streaming ? "…" : "")}
+                  </Paragraph>
                 </div>
-              );
-            })
-          )}
-        </div>
+              </div>
+            );
+          })
+        )}
+      </div>
 
-        <div
-          style={{
-            padding: 14,
-            borderTop: "1px solid #1f3257",
-            background: "#0e1830",
-            borderRadius: "0 0 10px 10px",
-          }}
-        >
-          <Space.Compact style={{ width: "100%" }}>
-            <TextArea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Peça algo ao Mundix AI…"
-              autoSize={{ minRows: 1, maxRows: 5 }}
-              onPressEnter={(e) => {
-                if (!e.shiftKey) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-              disabled={streaming}
-              style={{ background: "#0b1220" }}
+      <div
+        style={{
+          padding: 12,
+          borderTop: "1px solid #1f3257",
+          background: "#0e1830",
+        }}
+      >
+        {context && (
+          <Tag
+            color="blue"
+            style={{ marginBottom: 8, maxWidth: "100%", whiteSpace: "normal" }}
+          >
+            Contexto: {context}
+          </Tag>
+        )}
+        <Space.Compact style={{ width: "100%" }}>
+          <TextArea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Peça algo ao Mundix AI…"
+            autoSize={{ minRows: 1, maxRows: 5 }}
+            onPressEnter={(e) => {
+              if (!e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            disabled={streaming}
+            style={{ background: "#0b1220" }}
+          />
+          <Tooltip title="Enviar (Enter)">
+            <Button
+              type="primary"
+              icon={<SendOutlined />}
+              loading={streaming}
+              onClick={send}
+              style={{ height: "auto" }}
             />
-            <Tooltip title="Enviar (Enter)">
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                loading={streaming}
-                onClick={send}
-                style={{ height: "auto" }}
-              />
-            </Tooltip>
-          </Space.Compact>
-        </div>
-      </Layout>
+          </Tooltip>
+        </Space.Compact>
+      </div>
 
       <Modal
         title={
@@ -621,8 +557,8 @@ export function AssistantPage() {
         okButtonProps={{ disabled: !password }}
       >
         <Paragraph type="secondary">
-          A alteração em <Text code>{pwModal?.path}</Text> será gravada no disco
-          e commitada no git. Informe a senha mestra para autorizar.
+          A alteração em <Text code>{pwModal?.path}</Text> será gravada no disco e
+          commitada no git. Informe a senha mestra para autorizar.
         </Paragraph>
         <Input.Password
           value={password}
@@ -632,6 +568,6 @@ export function AssistantPage() {
           autoFocus
         />
       </Modal>
-    </Layout>
+    </div>
   );
 }

@@ -10,9 +10,9 @@ import ipaddress
 import subprocess
 from typing import Any, Callable
 
-from .. import clickhouse, content, firewall, network, system
+from .. import clickhouse, content, firewall, network, system, threatintel
 from ...config import settings
-from . import codegate, memory, safety
+from . import codegate, memory, livingmemory, safety
 
 # --------------------------------------------------------------------------- #
 # Tool schemas exposed to the model                                           #
@@ -223,10 +223,145 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_system_memory",
+            "description": (
+                "Atualiza UMA seção da memória viva do sistema (documento curado que "
+                "descreve como a plataforma funciona). Use quando algo do sistema mudar "
+                "de forma duradoura. Substitui a seção '## <title>' inteira."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Título da seção (sem '##')."},
+                    "content": {"type": "string", "description": "Novo conteúdo da seção (markdown)."},
+                },
+                "required": ["title", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_system_memory",
+            "description": "Lê o documento completo da memória viva do sistema.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "post_journal",
+            "description": (
+                "Publica um recado no mural/diário compartilhado com o operador e o "
+                "agente de build (copilot-cli). Use para registrar decisões, dúvidas, "
+                "incidentes ou pedir algo a quem evolui o sistema."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"},
+                    "topic": {"type": "string", "description": "Assunto curto (opcional)."},
+                },
+                "required": ["message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_journal",
+            "description": "Lê as mensagens recentes do mural/diário compartilhado.",
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer"}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "threat_intel_status",
+            "description": ("Mostra o estado do bloqueio proativo por Threat Intelligence "
+                            "(feeds de IOC: C2 de malware, botnets, redes sequestradas, "
+                            "atacantes), nº de redes bloqueadas, feeds ativos e última aplicação."),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "threat_intel_update",
+            "description": ("Rebaixa os feeds de Threat Intelligence e reaplica o bloqueio no "
+                            "firewall (nftables). Opcionalmente especifique feeds por id "
+                            "(spamhaus-drop, feodo, et-compromised, et-block, dshield, "
+                            "blocklist-de); vazio = todos os ativos."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "feeds": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "backup_status",
+            "description": ("Mostra o estado dos backups do appliance: quantidade, espaço "
+                            "usado, agendamento, retenção e resultado da última execução "
+                            "(verificada ou não)."),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "backup_run",
+            "description": ("Gera AGORA um backup verificado (configs de firewall/DNS/DHCP/WAF, "
+                            "estado do painel, memória da IA e histórico do SIEM) e valida sua "
+                            "integridade. Não restaura nada."),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 # Tools that may pause the agent loop awaiting out-of-band user action.
 SPECIAL_TOOLS = {"propose_code_change"}
+
+# name -> {"required": [...], "props": {...}} built once from the tool schemas so
+# dispatch can validate arguments and return a helpful, model-correctable error
+# instead of crashing deep inside a handler (e.g. KeyError: 'path').
+_TOOL_SCHEMA: dict[str, dict[str, Any]] = {
+    t["function"]["name"]: {
+        "required": list(t["function"].get("parameters", {}).get("required", [])),
+        "props": t["function"].get("parameters", {}).get("properties", {}),
+    }
+    for t in TOOLS
+}
+
+
+def _validate_args(name: str, args: dict[str, Any]) -> str | None:
+    """Return a clear error message if required arguments are missing/empty, else
+    None. Keeps the agent from looping on a cryptic handler exception."""
+    schema = _TOOL_SCHEMA.get(name)
+    if not schema:
+        return None
+    missing = [
+        k for k in schema["required"]
+        if k not in args or args[k] in (None, "")
+    ]
+    if missing:
+        allowed = ", ".join(schema["props"].keys()) or "(nenhum)"
+        return (
+            f"parâmetro(s) obrigatório(s) ausente(s): {', '.join(missing)}. "
+            f"Esta ferramenta exige: {', '.join(schema['required'])}. "
+            f"Parâmetros aceitos: {allowed}."
+        )
+    return None
+
 
 _MAX_OUTPUT = 6000
 
@@ -273,9 +408,20 @@ def _audit_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 def dispatch(name: str, args: dict[str, Any], conversation_id: str | None) -> dict[str, Any]:
     """Execute a tool. Returns a dict; may carry a special '_event' for the UI."""
     try:
+        arg_err = _validate_args(name, args)
+        if arg_err:
+            memory.audit(name, _audit_args(name, args), "error", arg_err, conversation_id)
+            return {"error": arg_err}
         result = _do_dispatch(name, args, conversation_id)
+        # Coerce to JSON-safe values (ClickHouse returns datetime/Decimal/UUID/IP
+        # objects) so downstream json.dumps — here, the SSE stream and the tool
+        # message persisted for the model — never raise and abort the turn.
+        event = result.pop("_event", None) if isinstance(result, dict) else None
+        result = json.loads(json.dumps(result, ensure_ascii=False, default=str))
+        if event is not None:
+            result["_event"] = event
         status = "blocked" if result.get("blocked") else ("error" if result.get("error") else "ok")
-        summary = safety.redact(json.dumps(result, ensure_ascii=False))[:500]
+        summary = safety.redact(json.dumps(result, ensure_ascii=False, default=str))[:500]
         memory.audit(name, _audit_args(name, args), status, summary, conversation_id)
         return result
     except Exception as e:  # never crash the agent loop on a tool error
@@ -409,4 +555,25 @@ def _do_dispatch(name: str, a: dict[str, Any], cid: str | None) -> dict[str, Any
     if name == "forget":
         memory.delete_fact(a["id"])
         return {"ok": True, "forgotten": a["id"]}
+    if name == "update_system_memory":
+        doc = livingmemory.update_section(a["title"], a["content"], updated_by="mundix-ai")
+        return {"ok": True, "section": a["title"], "size": len(doc["content"])}
+    if name == "read_system_memory":
+        return {"content": livingmemory.get_memory()["content"]}
+    if name == "post_journal":
+        entry = livingmemory.post("mundix-ai", a["message"], a.get("topic"))
+        return {"ok": True, "id": entry["id"]}
+    if name == "read_journal":
+        return {"entries": livingmemory.recent(min(int(a.get("limit", 20)), 100))}
+    if name == "threat_intel_status":
+        return threatintel.overview()
+    if name == "threat_intel_update":
+        feeds = a.get("feeds") or None
+        return threatintel.manual_update(feeds)
+    if name == "backup_status":
+        from .. import backup as _bk
+        return _bk.overview()
+    if name == "backup_run":
+        from .. import backup as _bk
+        return _bk.run_backup()
     return {"error": f"ferramenta desconhecida: {name}"}

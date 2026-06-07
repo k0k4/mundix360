@@ -9,14 +9,16 @@ Design decisions (per security review):
 """
 from __future__ import annotations
 
+import itertools
+import time
 import json
 from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
 from ...config import settings
-from . import knowledge, memory, tools
-from .mask import Masker
+from . import config_store, knowledge, memory, tools
+from .mask import Masker, NullMasker
 
 import re
 
@@ -32,18 +34,39 @@ def _held_len(s: str) -> int:
             return len(s) - start
     return 0
 
-_client: AsyncOpenAI | None = None
+_clients: dict[tuple, AsyncOpenAI] = {}
+
+# Stuck-loop guard: how many times the *same tool call producing the same
+# result* may occur in a turn before we stop and force a final answer. This is
+# not a cap on productive work — a call that returns a different result each
+# time (legitimate polling/progress) never trips it; only a call that keeps
+# returning the same thing (a failing/looping tool) does. It catches both
+# consecutive (A,A,A,A) and alternating (A,B,A,B,...) non-progressing loops.
+_STUCK_REPEATS = 4
+
+# Absolute wall-clock backstop for a single turn (seconds). With iterations
+# unlimited, this is the final safety net against a model that loops forever
+# while always producing *different* output (so the stuck guard never fires).
+# Generous on purpose: real tasks finish well under this.
+_MAX_RUN_SECONDS = 1800
 
 
-def client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        _client = AsyncOpenAI(
-            api_key=settings.dashscope_api_key,
-            base_url=settings.ai_base_url,
-            timeout=settings.ai_request_timeout,
+def client(cfg: dict[str, Any]) -> AsyncOpenAI:
+    """Return an AsyncOpenAI client for the effective provider config, cached by
+    (api_key, base_url, timeout). New config -> new client; the small cache is
+    capped so stale clients don't accumulate unboundedly."""
+    key = (cfg["api_key"], cfg["base_url"], cfg["request_timeout"])
+    c = _clients.get(key)
+    if c is None:
+        if len(_clients) > 4:
+            _clients.clear()
+        c = AsyncOpenAI(
+            api_key=cfg["api_key"],
+            base_url=cfg["base_url"],
+            timeout=cfg["request_timeout"],
         )
-    return _client
+        _clients[key] = c
+    return c
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -93,27 +116,64 @@ def _moderation_message(executed: list[str]) -> str:
     )
 
 
-def _build_messages(conversation_id: str) -> list[dict[str, Any]]:
+def _build_messages(conversation_id: str, context: str | None = None) -> list[dict[str, Any]]:
     msgs: list[dict[str, Any]] = [
-        {"role": "system", "content": knowledge.build_system_prompt()}
+        {"role": "system", "content": knowledge.build_system_prompt(context=context)}
     ]
     msgs.extend(memory.get_messages(conversation_id, limit=60))
     return msgs
 
 
-async def _stream_turn(messages: list[dict[str, Any]], masker: Masker):
+def _ensure_json_tool_args(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Guarantee every assistant tool_call carries a valid JSON-object string in
+    ``function.arguments``. Some providers (e.g. DashScope/Qwen code models) reject
+    requests where a replayed tool call has empty or non-JSON arguments — which
+    happens for our zero-parameter tools (status/update calls). Normalizes to '{}'
+    without mutating the original history dicts."""
+    fixed: list[dict[str, Any]] = []
+    for m in messages:
+        tcs = m.get("tool_calls")
+        if not tcs:
+            fixed.append(m)
+            continue
+        new_tcs = []
+        changed = False
+        for tc in tcs:
+            fn = tc.get("function") or {}
+            args = fn.get("arguments")
+            valid = isinstance(args, str) and args.strip() != ""
+            if valid:
+                try:
+                    json.loads(args)
+                except (ValueError, TypeError):
+                    valid = False
+            if not valid:
+                tc = {**tc, "function": {**fn, "arguments": "{}"}}
+                changed = True
+            new_tcs.append(tc)
+        fixed.append({**m, "tool_calls": new_tcs} if changed else m)
+    return fixed
+
+
+async def _stream_turn(messages: list[dict[str, Any]], masker: Masker, cfg: dict[str, Any],
+                       tools_enabled: bool = True):
     """One model call. Yields ('token', text) for content and returns the
-    accumulated (content, tool_calls) via StopAsyncIteration value.
+    accumulated (content, tool_calls) via a '_final' item.
 
     `messages` are masked (placeholders) before being sent; streamed content is
-    unmasked back to real values for the operator."""
-    stream = await client().chat.completions.create(
-        model=settings.ai_model,
-        messages=masker.mask_messages(messages),
-        tools=tools.TOOLS,
-        max_tokens=settings.ai_max_tokens,
+    unmasked back to real values for the operator. When ``tools_enabled`` is
+    False the model is forced to answer in prose (no further tool calls)."""
+    kwargs: dict[str, Any] = {}
+    if tools_enabled:
+        kwargs["tools"] = tools.TOOLS
+    stream = await client(cfg).chat.completions.create(
+        model=cfg["model"],
+        messages=_ensure_json_tool_args(masker.mask_messages(messages)),
+        max_tokens=cfg["max_tokens"],
+        temperature=cfg["temperature"],
         stream=True,
         stream_options={"include_usage": True},
+        **kwargs,
     )
 
     content_parts: list[str] = []
@@ -162,23 +222,35 @@ async def _stream_turn(messages: list[dict[str, Any]], masker: Masker):
                       "finish": finish, "usage": usage})
 
 
-async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
+async def run(conversation_id: str, user_message: str, context: str | None = None) -> AsyncIterator[str]:
     """Async generator of SSE strings for one user message."""
     memory.add_message(conversation_id, "user", content=user_message)
     memory.touch_conversation(conversation_id)
-    messages = _build_messages(conversation_id)
 
-    masker = Masker()
+    cfg = config_store.effective()
+    messages = _build_messages(conversation_id, context)
+
+    masker: Masker = Masker() if cfg["masking_enabled"] else NullMasker()
     executed: list[str] = []  # human labels of operational actions applied this turn
 
     try:
-        for _ in range(settings.ai_max_tool_iters):
+        # max_tool_iters <= 0 means "no limit" — iterate until the model stops
+        # requesting tools. A stuck-loop guard (below) still prevents a genuine
+        # infinite loop on a repeating, non-progressing tool call.
+        max_iters = cfg["max_tool_iters"]
+        loop = itertools.count() if max_iters <= 0 else range(max_iters)
+        stuck_counts: dict[str, int] = {}
+        error_counts: dict[str, int] = {}
+        started = time.monotonic()
+        for _ in loop:
+            if time.monotonic() - started > _MAX_RUN_SECONDS:
+                break
             content = ""
             tool_calls: list[dict[str, Any]] = []
             usage = None
             finish = None
 
-            async for kind, payload in _stream_turn(messages, masker):
+            async for kind, payload in _stream_turn(messages, masker, cfg):
                 if kind == "token":
                     yield _sse("token", {"text": payload})
                 elif kind == "_final":
@@ -211,6 +283,13 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
                 yield _sse("done", {})
                 return
 
+            # Signature of the requested batch (names + args); combined with the
+            # results below to detect non-progressing loops.
+            call_sig = json.dumps(
+                [[tc.get("name"), tc.get("arguments") or ""] for tc in tool_calls],
+                ensure_ascii=False, sort_keys=True,
+            )
+
             # Persist + append the assistant message carrying tool_calls
             assistant_tcs = [
                 {
@@ -226,6 +305,7 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
                              "tool_calls": assistant_tcs})
 
             paused = False
+            batch_results: list[Any] = []
             # Execute sequentially (live firewall: avoid concurrent state changes)
             for tc in tool_calls:
                 name = tc["name"]
@@ -242,6 +322,7 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
                     yield _sse(event["type"], event["data"])
 
                 yield _sse("tool_result", {"name": name, "result": result})
+                batch_results.append(result)
 
                 # Track successfully applied operational actions so we can confirm
                 # them even if the model's summary is later censored by moderation.
@@ -264,7 +345,7 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
 
             if paused:
                 # Let the model summarise, then stop and wait for the operator.
-                async for kind, payload in _stream_turn(messages, masker):
+                async for kind, payload in _stream_turn(messages, masker, cfg):
                     if kind == "token":
                         yield _sse("token", {"text": payload})
                     elif kind == "_final" and payload["content"]:
@@ -274,7 +355,56 @@ async def run(conversation_id: str, user_message: str) -> AsyncIterator[str]:
                 yield _sse("done", {})
                 return
 
-        yield _sse("token", {"text": "\n\n[Limite de iterações de ferramentas atingido.]"})
+            # Stuck-loop guard: a call that keeps returning the SAME result is not
+            # making progress. Key on call + result so legitimate polling (same
+            # call, changing result) is never interrupted; only a repeating,
+            # non-progressing call (incl. alternating A,B,A,B) trips this.
+            try:
+                result_sig = json.dumps(batch_results, ensure_ascii=False,
+                                        sort_keys=True, default=str)
+            except Exception:
+                result_sig = repr(batch_results)
+            sig = call_sig + "::" + result_sig
+            stuck_counts[sig] = stuck_counts.get(sig, 0) + 1
+            if stuck_counts[sig] >= _STUCK_REPEATS:
+                break
+
+            # Secondary guard: a tool batch that keeps FAILING with the same error
+            # is not progressing even if the model varies its arguments each time
+            # (e.g. repeatedly calling propose_code_change with a missing 'path').
+            # Keyed on the error payload alone so legitimate, succeeding calls and
+            # genuine polling (changing/non-error results) never trip it.
+            batch_errors = [
+                r.get("error") for r in batch_results
+                if isinstance(r, dict) and r.get("error")
+            ]
+            if batch_errors and len(batch_errors) == len(batch_results):
+                err_sig = json.dumps(batch_errors, ensure_ascii=False, sort_keys=True)
+                error_counts[err_sig] = error_counts.get(err_sig, 0) + 1
+                if error_counts[err_sig] >= _STUCK_REPEATS:
+                    break
+
+        # Reached only if the stuck-loop guard fired or a finite iteration limit
+        # was configured and exhausted. Force one final answer with tools disabled
+        # so the operator gets a useful summary instead of a dead-end notice.
+        messages.append({
+            "role": "user",
+            "content": ("Responda agora, de forma objetiva, com base nas "
+                        "informações já coletadas — não chame mais ferramentas."),
+        })
+        final = ""
+        async for kind, payload in _stream_turn(messages, masker, cfg, tools_enabled=False):
+            if kind == "token":
+                yield _sse("token", {"text": payload})
+            elif kind == "_final":
+                final = masker.unmask(payload["content"])
+        if final:
+            memory.add_message(conversation_id, "assistant", content=final)
+        else:
+            note = ("\n\n[Não consegui concluir automaticamente — uma ferramenta "
+                    "parece estar repetindo sem progresso. Tente reformular o pedido.]")
+            memory.add_message(conversation_id, "assistant", content=note.strip())
+            yield _sse("token", {"text": note})
         yield _sse("done", {})
     except Exception as e:
         from . import safety

@@ -56,6 +56,28 @@ CREATE TABLE IF NOT EXISTS audit (
     created_at  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit(created_at);
+
+CREATE TABLE IF NOT EXISTS ai_config (
+    key         TEXT PRIMARY KEY,
+    value       TEXT,
+    updated_at  REAL
+);
+
+CREATE TABLE IF NOT EXISTS living_memory (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    content     TEXT,
+    updated_at  REAL,
+    updated_by  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS journal (
+    id          TEXT PRIMARY KEY,
+    author      TEXT,
+    topic       TEXT,
+    content     TEXT,
+    created_at  REAL
+);
+CREATE INDEX IF NOT EXISTS idx_journal_time ON journal(created_at);
 """
 
 FACT_CATEGORIES = {"system", "preference", "incident", "exclusion", "note"}

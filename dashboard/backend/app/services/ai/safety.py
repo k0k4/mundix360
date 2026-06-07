@@ -54,6 +54,12 @@ _SECRET_FILENAMES = {
 # Live, runtime-known secret values to scrub verbatim (defence in depth).
 def _live_secrets() -> list[str]:
     vals = [settings.dashscope_api_key, settings.ai_master_password]
+    try:
+        from . import config_store
+
+        vals = config_store.live_secrets() or vals
+    except Exception:
+        pass
     return [v for v in vals if v and len(v) >= 6]
 
 
@@ -163,6 +169,12 @@ def shell_precheck(cmd: str) -> str | None:
 
 
 def password_ok(candidate: str) -> bool:
+    try:
+        from . import config_store
+
+        return config_store.verify_master_password(candidate)
+    except Exception:
+        pass
     expected = settings.ai_master_password
     if not expected:
         return False
