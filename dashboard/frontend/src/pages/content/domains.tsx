@@ -3,6 +3,7 @@ import { useTable, List, DeleteButton } from "@refinedev/antd";
 import { useCreate, useInvalidate } from "@refinedev/core";
 import { Table, Button, Modal, Form, Input, Space, message } from "antd";
 import { PlusOutlined, GlobalOutlined } from "@ant-design/icons";
+import { ListTitle } from "../../components/ui";
 
 export const DomainsPage = () => {
   const { tableProps } = useTable({
@@ -32,7 +33,11 @@ export const DomainsPage = () => {
 
   return (
     <List
-      title="Filtro de Conteúdo — Domínios bloqueados (DNS sinkhole)"
+      title={
+        <ListTitle eyebrow={<><GlobalOutlined /> DNS Sinkhole</>}>
+          Filtro de Conteúdo
+        </ListTitle>
+      }
       headerButtons={
         <Button
           type="primary"

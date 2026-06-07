@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timezone
 
 from ..config import settings
-from . import shell
+from . import network, shell
 
 _HEADER = "# Mundix360 content blocklist - managed by dashboard\n"
 _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-zA-Z0-9_-]{1,63}\.)+[a-zA-Z]{2,}$")
@@ -54,31 +54,69 @@ def _write(domains: dict[str, str]) -> None:
         note = domains[domain]
         ts = note or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         lines.append(f"address=/{domain}/0.0.0.0 # {ts}\n")
-    with open(path, "w") as f:
-        f.writelines(lines)
+    network._atomic_write(path, "".join(lines))
 
 
 def add_domain(domain: str, note: str = "") -> dict[str, object]:
     domain = domain.strip().lower()
     if not validate_domain(domain):
         raise ValueError(f"invalid domain: {domain}")
-    domains = _read_domains()
-    domains[domain] = note or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    _write(domains)
-    reload_result = reload_dnsmasq()
+    with network.config_lock:
+        path = settings.content_blocklist_file
+        prev = None
+        if os.path.isfile(path):
+            with open(path) as f:
+                prev = f.read()
+        domains = _read_domains()
+        domains[domain] = note or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _write(domains)
+        reload_result = _validate_and_restart(path, prev)
     return {"ok": True, "domain": domain, "reload": reload_result}
 
 
 def remove_domain(domain: str) -> dict[str, object]:
     domain = domain.strip().lower()
-    domains = _read_domains()
-    if domain in domains:
-        del domains[domain]
-        _write(domains)
-    reload_result = reload_dnsmasq()
+    with network.config_lock:
+        path = settings.content_blocklist_file
+        prev = None
+        if os.path.isfile(path):
+            with open(path) as f:
+                prev = f.read()
+        domains = _read_domains()
+        if domain in domains:
+            del domains[domain]
+            _write(domains)
+        reload_result = _validate_and_restart(path, prev)
     return {"ok": True, "domain": domain, "reload": reload_result}
 
 
+def _validate_and_restart(path: str, prev: str | None) -> dict[str, object]:
+    """Validate the generated config and restart dnsmasq (SIGHUP doesn't
+    re-read .conf files). Rolls back on failure. Caller holds config_lock."""
+    test = shell.run(["dnsmasq", "--test"], timeout=20)
+    if not test.ok:
+        _restore(path, prev)
+        return {"ok": False, "stderr": (test.stderr or test.stdout).strip()}
+    res = shell.run(["systemctl", "restart", "dnsmasq"], timeout=60)
+    if not res.ok:
+        _restore(path, prev)
+        shell.run(["systemctl", "restart", "dnsmasq"], timeout=60)
+        return {"ok": False, "stderr": res.stderr.strip()}
+    return {"ok": True, "stderr": ""}
+
+
+def _restore(path: str, prev: str | None) -> None:
+    if prev is None:
+        if os.path.isfile(path):
+            os.remove(path)
+    else:
+        network._atomic_write(path, prev)
+
+
 def reload_dnsmasq() -> dict[str, object]:
-    res = shell.run(["systemctl", "reload-or-restart", "dnsmasq"], timeout=15)
-    return {"ok": res.ok, "stderr": res.stderr.strip()}
+    with network.config_lock:
+        test = shell.run(["dnsmasq", "--test"], timeout=20)
+        if not test.ok:
+            return {"ok": False, "stderr": (test.stderr or test.stdout).strip()}
+        res = shell.run(["systemctl", "restart", "dnsmasq"], timeout=60)
+        return {"ok": res.ok, "stderr": res.stderr.strip()}
