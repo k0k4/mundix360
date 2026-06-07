@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useTable, List, DeleteButton } from "@refinedev/antd";
 import { useCreate, useInvalidate } from "@refinedev/core";
 import { Table, Button, Modal, Form, Input, message } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { PlusOutlined, NodeIndexOutlined } from "@ant-design/icons";
+import { ListTitle } from "../../components/ui";
 
 export const ReservationsPage = () => {
   const { tableProps } = useTable({
@@ -32,7 +33,11 @@ export const ReservationsPage = () => {
 
   return (
     <List
-      title="Rede — Reservas DHCP (IP fixo)"
+      title={
+        <ListTitle eyebrow={<><NodeIndexOutlined /> Rede · DHCP</>}>
+          Reservas de IP
+        </ListTitle>
+      }
       headerButtons={
         <Button
           type="primary"

@@ -96,11 +96,62 @@ def host_metrics() -> dict[str, Any]:
     }
 
 
-def interfaces() -> list[dict[str, Any]]:
-    res = shell.run(["ip", "-o", "-4", "addr", "show"], timeout=8)
-    out: list[dict[str, Any]] = []
+def _default_route_iface() -> str | None:
+    """Interface carrying the default route — the most reliable WAN heuristic."""
+    res = shell.run(["ip", "-o", "route", "show", "default"], timeout=8)
     for line in res.stdout.strip().splitlines():
         parts = line.split()
+        if "dev" in parts:
+            return parts[parts.index("dev") + 1]
+    return None
+
+
+def interfaces() -> list[dict[str, Any]]:
+    """Enumerate every physical/virtual NIC on the host (excluding loopback) with
+    its operational state, MAC and IPv4 addresses. Detected dynamically so the
+    appliance adapts to whatever interfaces exist on each deployment — never
+    hardcoded. The interface holding the default route is flagged as the WAN."""
+    wan = _default_route_iface()
+
+    # Map iface -> list of CIDR addresses (an interface may have several).
+    addrs: dict[str, list[str]] = {}
+    res_addr = shell.run(["ip", "-o", "-4", "addr", "show"], timeout=8)
+    for line in res_addr.stdout.strip().splitlines():
+        parts = line.split()
         if len(parts) >= 4:
-            out.append({"interface": parts[1], "address": parts[3]})
+            addrs.setdefault(parts[1], []).append(parts[3])
+
+    out: list[dict[str, Any]] = []
+    res_link = shell.run(["ip", "-o", "link", "show"], timeout=8)
+    for line in res_link.stdout.strip().splitlines():
+        # Format: "2: ens18: <BROADCAST,...> mtu 1500 ... state UP ... link/ether <mac> ..."
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        name = parts[1].rstrip(":").split("@")[0]
+        if name == "lo":
+            continue
+        state = "unknown"
+        if "state" in parts:
+            state = parts[parts.index("state") + 1].lower()
+        mac = ""
+        for token in ("link/ether", "link/none"):
+            if token in parts:
+                idx = parts.index(token)
+                if token == "link/ether" and idx + 1 < len(parts):
+                    mac = parts[idx + 1]
+                break
+        iface_addrs = addrs.get(name, [])
+        out.append({
+            "interface": name,
+            # Keep a flat 'address' for backward compatibility (first CIDR).
+            "address": iface_addrs[0] if iface_addrs else None,
+            "addresses": iface_addrs,
+            "state": state,
+            "mac": mac,
+            "is_wan": name == wan,
+        })
+    # Stable, friendly ordering: WAN first, then up interfaces, then by name.
+    out.sort(key=lambda i: (not i["is_wan"], i["state"] != "up", i["interface"]))
     return out
+
