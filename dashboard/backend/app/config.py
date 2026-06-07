@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     dnsmasq_etc_dir: str = "/etc/dnsmasq.d"
     dhcp_leases_file: str = "/var/lib/misc/dnsmasq.leases"
     content_blocklist_file: str = "/etc/dnsmasq.d/mundix-content-block.conf"
+    dnsmasq_log_file: str = "/var/log/dnsmasq/dnsmasq.log"
 
     # AI assistant (Qwen3.7-Max via DashScope, OpenAI-compatible)
     dashscope_api_key: str = Field(
@@ -43,7 +44,7 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     ai_model: str = "qwen3.7-max"
     ai_max_tokens: int = 1536
-    ai_max_tool_iters: int = 8
+    ai_max_tool_iters: int = 0
     ai_request_timeout: int = 120
     ai_master_password: str = Field(
         "", validation_alias=AliasChoices("MUNDIX_AI_MASTER_PASSWORD", "AI_MASTER_PASSWORD")

@@ -3,7 +3,6 @@ import {
   Row,
   Col,
   Card,
-  Statistic,
   Typography,
   Progress,
   Tag,
@@ -16,6 +15,7 @@ import {
   StopOutlined,
   CloudServerOutlined,
   WarningOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
   ResponsiveContainer,
@@ -27,34 +27,40 @@ import {
   CartesianGrid,
 } from "recharts";
 import { sevColor, sevLabel } from "../format";
+import { PageHeader, KpiCard } from "../components/ui";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
-function KpiCard({
-  icon,
+function ResourceBar({
+  label,
+  pct,
   color,
-  title,
-  value,
-  suffix,
 }: {
-  icon: React.ReactNode;
+  label: string;
+  pct: number;
   color: string;
-  title: string;
-  value: number | string;
-  suffix?: string;
 }) {
   return (
-    <Card bordered={false} styles={{ body: { padding: 18 } }}>
-      <Space align="center" size={14}>
-        <div
-          className="mx-kpi-icon"
-          style={{ background: `${color}22`, color }}
-        >
-          {icon}
-        </div>
-        <Statistic title={title} value={value} suffix={suffix} />
-      </Space>
-    </Card>
+    <div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginBottom: 4,
+        }}
+      >
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          {label}
+        </Text>
+        <Text style={{ fontSize: 13, fontWeight: 600 }}>{pct}%</Text>
+      </div>
+      <Progress
+        percent={pct}
+        strokeColor={color}
+        trailColor="rgba(255,255,255,0.06)"
+        showInfo={false}
+      />
+    </div>
   );
 }
 
@@ -71,7 +77,7 @@ export const Overview = () => {
 
   if (isLoading || !ov?.data) {
     return (
-      <div style={{ textAlign: "center", padding: 80 }}>
+      <div style={{ textAlign: "center", padding: 100 }}>
         <Spin size="large" />
       </div>
     );
@@ -86,79 +92,105 @@ export const Overview = () => {
     }),
     alerts: p.count,
   }));
+  const spark = timeline.map((p: any) => p.alerts as number);
   const bySeverity = st?.data?.by_severity ?? [];
 
   return (
     <div>
-      <Title level={3} style={{ marginTop: 0 }}>
-        Visão Geral
-      </Title>
-      <Text type="secondary">
-        Centro de comando — saúde, ameaças e tráfego em tempo real
-      </Text>
+      <PageHeader
+        eyebrow={
+          <>
+            <ThunderboltOutlined /> Centro de Comando
+          </>
+        }
+        title="Visão Geral"
+        subtitle="Saúde, ameaças e tráfego da rede em tempo real"
+      />
 
-      <Row gutter={[16, 16]} style={{ marginTop: 18 }}>
-        <Col xs={24} sm={12} lg={6}>
+      <Row gutter={[18, 18]}>
+        <Col xs={24} sm={12} xl={6}>
           <KpiCard
             icon={<AlertOutlined />}
-            color="#1668dc"
-            title="Alertas (24h)"
+            color="#2f81f7"
+            label="Alertas (24h)"
             value={d.siem?.alerts_24h ?? 0}
+            spark={spark.length > 1 ? spark : undefined}
           />
         </Col>
-        <Col xs={24} sm={12} lg={6}>
+        <Col xs={24} sm={12} xl={6}>
           <KpiCard
             icon={<WarningOutlined />}
-            color="#cf1322"
-            title="Alertas Críticos (24h)"
+            color="#f87171"
+            label="Críticos (24h)"
             value={d.siem?.alerts_high_24h ?? 0}
           />
         </Col>
-        <Col xs={24} sm={12} lg={6}>
+        <Col xs={24} sm={12} xl={6}>
           <KpiCard
             icon={<StopOutlined />}
-            color="#fa8c16"
-            title="IPs Bloqueados"
+            color="#fbbf24"
+            label="IPs Bloqueados"
             value={d.firewall?.blocked_ips ?? 0}
           />
         </Col>
-        <Col xs={24} sm={12} lg={6}>
+        <Col xs={24} sm={12} xl={6}>
           <KpiCard
             icon={<CloudServerOutlined />}
-            color="#52c41a"
-            title="Serviços Ativos"
+            color="#34d399"
+            label="Serviços Ativos"
             value={`${up}/${services.length}`}
           />
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+      <Row gutter={[18, 18]} style={{ marginTop: 18 }}>
         <Col xs={24} lg={16}>
-          <Card title="Alertas por hora (24h)" bordered={false}>
-            <ResponsiveContainer width="100%" height={260}>
-              <AreaChart data={timeline}>
+          <Card title="Alertas por hora · últimas 24h" bordered={false}>
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart
+                data={timeline}
+                margin={{ top: 6, right: 6, left: -18, bottom: 0 }}
+              >
                 <defs>
                   <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#1668dc" stopOpacity={0.6} />
-                    <stop offset="100%" stopColor="#1668dc" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="#2f81f7" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2a44" />
-                <XAxis dataKey="t" stroke="#64748b" fontSize={11} />
-                <YAxis stroke="#64748b" fontSize={11} />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#16233c"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="t"
+                  stroke="#5f7088"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  stroke="#5f7088"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                />
                 <Tooltip
+                  cursor={{ stroke: "#22d3ee", strokeOpacity: 0.3 }}
                   contentStyle={{
-                    background: "#15203a",
-                    border: "1px solid #1f2a44",
-                    borderRadius: 8,
+                    background: "#0e1626",
+                    border: "1px solid #1b2942",
+                    borderRadius: 10,
+                    boxShadow: "0 10px 30px -12px rgba(0,0,0,.7)",
                   }}
+                  labelStyle={{ color: "#93a4c0" }}
                 />
                 <Area
                   type="monotone"
                   dataKey="alerts"
-                  stroke="#1668dc"
+                  stroke="#22d3ee"
                   fill="url(#g1)"
-                  strokeWidth={2}
+                  strokeWidth={2.2}
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -166,38 +198,32 @@ export const Overview = () => {
         </Col>
         <Col xs={24} lg={8}>
           <Card title="Recursos do Host" bordered={false}>
-            <Space direction="vertical" size={16} style={{ width: "100%" }}>
-              <div>
-                <Text type="secondary">CPU (load)</Text>
-                <Progress
-                  percent={Math.round(d.host?.load_pct ?? 0)}
-                  strokeColor="#1668dc"
-                />
-              </div>
-              <div>
-                <Text type="secondary">Memória</Text>
-                <Progress
-                  percent={Math.round(d.host?.memory?.used_pct ?? 0)}
-                  strokeColor="#722ed1"
-                />
-              </div>
-              <div>
-                <Text type="secondary">Disco</Text>
-                <Progress
-                  percent={Math.round(d.host?.disk?.used_pct ?? 0)}
-                  strokeColor="#13c2c2"
-                />
-              </div>
+            <Space direction="vertical" size={20} style={{ width: "100%" }}>
+              <ResourceBar
+                label="CPU (load)"
+                pct={Math.round(d.host?.load_pct ?? 0)}
+                color="#2f81f7"
+              />
+              <ResourceBar
+                label="Memória"
+                pct={Math.round(d.host?.memory?.used_pct ?? 0)}
+                color="#a855f7"
+              />
+              <ResourceBar
+                label="Disco"
+                pct={Math.round(d.host?.disk?.used_pct ?? 0)}
+                color="#22d3ee"
+              />
             </Space>
           </Card>
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+      <Row gutter={[18, 18]} style={{ marginTop: 18 }}>
         <Col xs={24} lg={12}>
-          <Card title="Severidade dos Alertas (24h)" bordered={false}>
+          <Card title="Severidade dos Alertas · 24h" bordered={false}>
             <Table
-              size="small"
+              size="middle"
               rowKey="severity"
               pagination={false}
               dataSource={bySeverity}
@@ -217,7 +243,7 @@ export const Overview = () => {
         <Col xs={24} lg={12}>
           <Card title="Serviços da Plataforma" bordered={false}>
             <Table
-              size="small"
+              size="middle"
               rowKey="name"
               pagination={false}
               scroll={{ y: 240 }}
@@ -229,7 +255,15 @@ export const Overview = () => {
                   dataIndex: "running",
                   align: "right",
                   render: (r: boolean) => (
-                    <Tag color={r ? "success" : "error"}>
+                    <Tag
+                      icon={
+                        <span
+                          className={`mx-dot ${r ? "" : "down"}`}
+                          style={{ marginRight: 6 }}
+                        />
+                      }
+                      color={r ? "success" : "error"}
+                    >
                       {r ? "ativo" : "parado"}
                     </Tag>
                   ),

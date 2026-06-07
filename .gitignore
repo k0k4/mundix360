@@ -35,6 +35,7 @@ venv/
 
 # Backups locais
 nftables.conf.backup.*
+/backups/
 
 # Sistema
 .DS_Store

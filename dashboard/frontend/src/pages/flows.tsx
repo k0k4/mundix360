@@ -1,6 +1,8 @@
 import { useCustom } from "@refinedev/core";
-import { Row, Col, Card, Statistic, Table, Spin, Typography } from "antd";
+import { Row, Col, Card, Statistic, Table, Spin } from "antd";
+import { PartitionOutlined } from "@ant-design/icons";
 import { fmtBytes, stripV6 } from "../format";
+import { PageHeader } from "../components/ui";
 
 export const FlowsPage = () => {
   const { data, isLoading } = useCustom<any>({
@@ -34,9 +36,15 @@ export const FlowsPage = () => {
 
   return (
     <div>
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
-        Flows — NetFlow (Akvorado)
-      </Typography.Title>
+      <PageHeader
+        eyebrow={
+          <>
+            <PartitionOutlined /> NetFlow · Akvorado
+          </>
+        }
+        title="Flows de Rede"
+        subtitle="Volume de tráfego e principais conversas observadas"
+      />
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={8}>
           <Card bordered={false}>

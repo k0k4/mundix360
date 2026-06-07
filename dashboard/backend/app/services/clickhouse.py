@@ -1,23 +1,32 @@
 """ClickHouse access for SIEM alerts and NetFlow data."""
 from __future__ import annotations
 
-from functools import lru_cache
+import threading
 from typing import Any
 
 import clickhouse_connect
 
 from ..config import settings
 
+# clickhouse_connect clients are NOT safe to share across threads — a session may
+# only run one query at a time. FastAPI executes sync endpoints in a threadpool,
+# so a single cached client raises "Attempt to execute concurrent queries within
+# the same session" under load. Keep one client per thread instead.
+_local = threading.local()
 
-@lru_cache(maxsize=1)
+
 def _client():
-    return clickhouse_connect.get_client(
-        host=settings.clickhouse_host,
-        port=settings.clickhouse_port,
-        username=settings.clickhouse_user,
-        password=settings.clickhouse_password,
-        database=settings.clickhouse_db,
-    )
+    client = getattr(_local, "client", None)
+    if client is None:
+        client = clickhouse_connect.get_client(
+            host=settings.clickhouse_host,
+            port=settings.clickhouse_port,
+            username=settings.clickhouse_user,
+            password=settings.clickhouse_password,
+            database=settings.clickhouse_db,
+        )
+        _local.client = client
+    return client
 
 
 def query(sql: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:

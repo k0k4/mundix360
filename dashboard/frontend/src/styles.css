@@ -1,6 +1,37 @@
+/* =========================================================================
+   Mundix Security 360 — Design System ("Command Center")
+   Dark NOC/SOC aesthetic: deep navy, cyan/blue accents, subtle neon glow.
+   ========================================================================= */
+
 :root {
-  --mx-bg: #0b1220;
-  --mx-panel: #111a2e;
+  /* Surfaces */
+  --mx-bg: #060b16;
+  --mx-bg-2: #08101f;
+  --mx-panel: #0e1626;
+  --mx-panel-2: #101b2e;
+  --mx-elevated: #131f34;
+  --mx-border: #1b2942;
+  --mx-border-soft: #15223a;
+
+  /* Text */
+  --mx-text: #e6edf6;
+  --mx-text-dim: #93a4c0;
+  --mx-text-faint: #5f7088;
+
+  /* Accents */
+  --mx-primary: #2f81f7;
+  --mx-cyan: #22d3ee;
+  --mx-success: #34d399;
+  --mx-warning: #fbbf24;
+  --mx-danger: #f87171;
+  --mx-magenta: #e879f9;
+
+  /* Glows */
+  --mx-glow-cyan: 0 0 0 1px rgba(34, 211, 238, 0.25),
+    0 8px 30px -10px rgba(34, 211, 238, 0.35);
+  --mx-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
+    0 10px 30px -18px rgba(0, 0, 0, 0.8);
+  --mx-radius: 14px;
 }
 
 html,
@@ -11,44 +42,404 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  background: var(--mx-bg);
+  color: var(--mx-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-.mx-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 12px;
-  color: #fff;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  font-size: 16px;
+/* Ambient backdrop glow behind the whole app */
+#root {
+  background:
+    radial-gradient(1200px 600px at 12% -10%, rgba(47, 129, 247, 0.12), transparent 60%),
+    radial-gradient(1000px 500px at 100% 0%, rgba(34, 211, 238, 0.08), transparent 55%),
+    var(--mx-bg);
 }
 
-.mx-brand .dot {
+/* ---- Scrollbars ---------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #243450 transparent;
+}
+*::-webkit-scrollbar {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
-  background: #52c41a;
-  box-shadow: 0 0 8px #52c41a;
+}
+*::-webkit-scrollbar-thumb {
+  background: #243450;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #2f456b;
+  background-clip: content-box;
 }
 
-.mx-kpi-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
+/* ---- Layout shell -------------------------------------------------------- */
+.ant-layout {
+  background: transparent !important;
 }
 
-.mx-mono {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 12px;
+/* Resizable lateral menu: width is driven by --mx-sider-width (set by the
+   SiderResizer drag handle). Applies to both the fixed sider and its layout
+   placeholder; the collapsed state keeps Ant's own narrow width. */
+:root {
+  --mx-sider-width: 240px;
+}
+.ant-layout-sider:not(.ant-layout-sider-collapsed) {
+  width: var(--mx-sider-width) !important;
+  min-width: var(--mx-sider-width) !important;
+  max-width: var(--mx-sider-width) !important;
+  flex: 0 0 var(--mx-sider-width) !important;
+}
+
+/* Drag handle sitting on the sider's right edge */
+.mx-sider-resizer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: var(--mx-sider-width);
+  width: 10px;
+  transform: translateX(-5px);
+  cursor: col-resize;
+  z-index: 1000;
+  background: transparent;
+  touch-action: none;
+}
+.mx-sider-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-1px);
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.mx-sider-resizer:hover::after,
+.mx-sider-resizer:active::after {
+  background: var(--mx-primary);
+}
+@media (max-width: 768px) {
+  .mx-sider-resizer {
+    display: none;
+  }
 }
 
 .ant-layout-sider {
-  background: linear-gradient(180deg, #0b1220 0%, #0e1730 100%) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(10, 16, 30, 0.96) 0%,
+    rgba(8, 13, 24, 0.96) 100%
+  ) !important;
+  border-right: 1px solid var(--mx-border-soft);
+  backdrop-filter: blur(8px);
+}
+
+.ant-layout-sider .ant-menu {
+  background: transparent !important;
+  border-inline-end: none !important;
+  padding: 8px 10px;
+}
+
+/* Menu items: pill shape, soft hover, glowing active state */
+.ant-menu-dark .ant-menu-item,
+.ant-menu-dark .ant-menu-submenu-title {
+  border-radius: 10px !important;
+  margin: 4px 0 !important;
+  width: auto !important;
+  color: var(--mx-text-dim) !important;
+  font-weight: 500;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.ant-menu-dark .ant-menu-item:hover,
+.ant-menu-dark .ant-menu-submenu-title:hover {
+  background: rgba(47, 129, 247, 0.1) !important;
+  color: var(--mx-text) !important;
+}
+.ant-menu-dark .ant-menu-item-selected {
+  background: linear-gradient(
+    90deg,
+    rgba(47, 129, 247, 0.22),
+    rgba(34, 211, 238, 0.1)
+  ) !important;
+  color: #fff !important;
+  box-shadow: inset 0 0 0 1px rgba(47, 129, 247, 0.35);
+}
+.ant-menu-dark .ant-menu-item-selected::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--mx-cyan), var(--mx-primary));
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.7);
+}
+
+/* Content area padding */
+.ant-layout-content {
+  padding: 22px 26px 40px !important;
+}
+
+/* ---- Header -------------------------------------------------------------- */
+.mx-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 60px;
+  padding: 0 22px;
+  background: rgba(8, 13, 24, 0.72) !important;
+  border-bottom: 1px solid var(--mx-border-soft);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.mx-header .mx-spacer {
+  flex: 1;
+}
+.mx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(20, 32, 54, 0.7);
+  border: 1px solid var(--mx-border);
+  font-size: 12.5px;
+  color: var(--mx-text-dim);
+  font-weight: 500;
+}
+.mx-pill .mx-pill-strong {
+  color: var(--mx-text);
+  font-weight: 600;
+}
+
+/* ---- Brand --------------------------------------------------------------- */
+.mx-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 14px 14px;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  font-size: 17px;
+}
+.mx-brand-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, #2f81f7, #22d3ee);
+  box-shadow: 0 6px 18px -6px rgba(34, 211, 238, 0.6);
+  color: #03131f;
+  font-size: 19px;
+}
+.mx-brand .mx-360 {
+  background: linear-gradient(90deg, var(--mx-cyan), var(--mx-primary));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ---- Live status dot ----------------------------------------------------- */
+.mx-dot {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--mx-success);
+}
+.mx-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  color: var(--mx-success);
+  opacity: 0.6;
+  animation: mx-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.mx-dot.warn {
+  background: var(--mx-warning);
+}
+.mx-dot.warn::after {
+  color: var(--mx-warning);
+}
+.mx-dot.down {
+  background: var(--mx-danger);
+}
+.mx-dot.down::after {
+  color: var(--mx-danger);
+}
+@keyframes mx-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  75%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+/* ---- Cards --------------------------------------------------------------- */
+.ant-card {
+  background: linear-gradient(
+    180deg,
+    var(--mx-panel) 0%,
+    var(--mx-panel-2) 100%
+  ) !important;
+  border: 1px solid var(--mx-border-soft) !important;
+  border-radius: var(--mx-radius) !important;
+  box-shadow: var(--mx-shadow);
+  transition: border-color 0.2s ease, transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.ant-card-hoverable:hover {
+  border-color: rgba(47, 129, 247, 0.45) !important;
+  transform: translateY(-2px);
+}
+.ant-card-head {
+  border-bottom: 1px solid var(--mx-border-soft) !important;
+  min-height: 52px !important;
+  font-weight: 650 !important;
+}
+.ant-card-head-title {
+  font-weight: 650 !important;
+  letter-spacing: 0.2px;
+}
+
+/* ---- KPI card ------------------------------------------------------------ */
+.mx-kpi {
+  position: relative;
+  overflow: hidden;
+}
+.mx-kpi::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    120% 120% at 100% 0%,
+    var(--mx-kpi-accent, rgba(47, 129, 247, 0.16)),
+    transparent 55%
+  );
+  pointer-events: none;
+}
+.mx-kpi-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 21px;
+  flex: none;
+}
+.mx-kpi-label {
+  color: var(--mx-text-dim);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.mx-kpi-value {
+  font-size: 30px;
+  font-weight: 750;
+  line-height: 1.1;
+  color: var(--mx-text);
+  letter-spacing: -0.5px;
+}
+.mx-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.mx-trend.up {
+  color: var(--mx-danger);
+  background: rgba(248, 113, 113, 0.12);
+}
+.mx-trend.down {
+  color: var(--mx-success);
+  background: rgba(52, 211, 153, 0.12);
+}
+.mx-trend.flat {
+  color: var(--mx-text-dim);
+  background: rgba(147, 164, 192, 0.1);
+}
+
+/* ---- Section title ------------------------------------------------------- */
+.mx-page-title {
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: -0.3px;
+  margin: 0;
+  color: var(--mx-text);
+}
+.mx-page-sub {
+  color: var(--mx-text-dim);
+  font-size: 13.5px;
+}
+.mx-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--mx-cyan);
+}
+
+/* ---- Tables -------------------------------------------------------------- */
+.ant-table {
+  background: transparent !important;
+}
+.ant-table-thead > tr > th {
+  background: rgba(13, 21, 37, 0.7) !important;
+  border-bottom: 1px solid var(--mx-border) !important;
+  color: var(--mx-text-dim) !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--mx-border-soft) !important;
+}
+.ant-table-tbody > tr:hover > td {
+  background: rgba(47, 129, 247, 0.06) !important;
+}
+
+/* ---- Misc ---------------------------------------------------------------- */
+.mx-mono {
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, Menlo, monospace;
+  font-size: 12.5px;
+}
+.ant-statistic-title {
+  color: var(--mx-text-dim) !important;
+}
+.ant-progress-text {
+  color: var(--mx-text-dim) !important;
+}
+.ant-btn-primary {
+  box-shadow: 0 6px 16px -8px rgba(47, 129, 247, 0.8);
+}
+.ant-tag {
+  border-radius: 6px;
+  font-weight: 600;
 }

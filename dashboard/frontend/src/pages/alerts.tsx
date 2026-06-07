@@ -18,7 +18,9 @@ import {
   Tabs,
 } from "antd";
 import { useParams, useNavigate } from "react-router-dom";
+import { AlertOutlined } from "@ant-design/icons";
 import { sevColor, sevLabel, fmtTime } from "../format";
+import { ListTitle } from "../components/ui";
 
 const { Text, Paragraph } = Typography;
 
@@ -30,7 +32,13 @@ export const AlertList = () => {
   });
 
   return (
-    <List title="SIEM — Alertas de Segurança">
+    <List
+      title={
+        <ListTitle eyebrow={<><AlertOutlined /> SIEM</>}>
+          Alertas de Segurança
+        </ListTitle>
+      }
+    >
       <Space style={{ marginBottom: 16 }} wrap>
         <Select
           placeholder="Severidade mínima"

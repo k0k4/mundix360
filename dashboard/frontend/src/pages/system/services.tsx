@@ -6,7 +6,9 @@ import {
   PlayCircleOutlined,
   PoweroffOutlined,
   SyncOutlined,
+  CloudServerOutlined,
 } from "@ant-design/icons";
+import { ListTitle } from "../../components/ui";
 
 export const ServicesPage = () => {
   const { tableProps } = useTable({
@@ -34,7 +36,13 @@ export const ServicesPage = () => {
   };
 
   return (
-    <List title="Sistema — Serviços da Plataforma">
+    <List
+      title={
+        <ListTitle eyebrow={<><CloudServerOutlined /> Sistema</>}>
+          Serviços da Plataforma
+        </ListTitle>
+      }
+    >
       <Table {...tableProps} rowKey="id" size="middle">
         <Table.Column
           title="Serviço"

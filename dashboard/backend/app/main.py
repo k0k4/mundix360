@@ -18,6 +18,7 @@ from .security import require_auth
 from .routers import (
     ai,
     alerts,
+    backup,
     content,
     firewall,
     flows,
@@ -25,6 +26,8 @@ from .routers import (
     network,
     overview,
     system,
+    threatintel,
+    waf,
 )
 from .services.ai import memory as ai_memory
 
@@ -38,6 +41,12 @@ app = FastAPI(
 @app.on_event("startup")
 def _startup() -> None:
     ai_memory.init_db()
+    from .services import contentcat
+    contentcat.start_scheduler()
+    from .services import threatintel as _ti
+    _ti.start_scheduler()
+    from .services import backup as _bk
+    _bk.start_scheduler()
 
 
 app.add_middleware(
@@ -55,7 +64,7 @@ def health():
 
 
 _protected = [Depends(require_auth)]
-for r in (overview, alerts, firewall, network, content, flows, logs, system, ai):
+for r in (overview, alerts, firewall, network, content, flows, logs, system, ai, threatintel, waf, backup):
     app.include_router(r.router, dependencies=_protected)
 
 

@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useCustom } from "@refinedev/core";
 import { Card, Table, Tag, Input, Space, Typography, Select } from "antd";
+import { FileTextOutlined } from "@ant-design/icons";
 import { fmtTime } from "../format";
+import { PageHeader } from "../components/ui";
 
 const { Text } = Typography;
 
@@ -19,9 +21,15 @@ export const LogsPage = () => {
 
   return (
     <div>
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
-        Logs — Loki
-      </Typography.Title>
+      <PageHeader
+        eyebrow={
+          <>
+            <FileTextOutlined /> Loki
+          </>
+        }
+        title="Logs"
+        subtitle="Consulta em tempo real aos logs agregados (LogQL)"
+      />
       <Space style={{ marginBottom: 16 }} wrap>
         <Input
           value={query}
