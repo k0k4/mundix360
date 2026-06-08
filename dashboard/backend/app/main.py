@@ -47,6 +47,13 @@ def _startup() -> None:
     _ti.start_scheduler()
     from .services import backup as _bk
     _bk.start_scheduler()
+    # Foundation hardening: ensure the kernel anti-spoof/redirect posture is in
+    # place on every boot, regardless of which appliance this image runs on.
+    try:
+        from .services import fwmanage as _fw
+        _fw.apply_hardening()
+    except Exception:
+        pass
 
 
 app.add_middleware(

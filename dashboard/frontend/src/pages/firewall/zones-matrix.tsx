@@ -26,6 +26,7 @@ export function ZonesMatrixPage() {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [safeMode, setSafeMode] = useState(true);
   const [msg, ctx] = antdMessage.useMessage();
 
   const load = useCallback(async () => {
@@ -53,7 +54,8 @@ export function ZonesMatrixPage() {
       const key = `${src}>${dst}`;
       setBusy(key);
       try {
-        await api.put(`/api/firewall/zone-policies/${src}/${dst}`, { action, log });
+        const q = safeMode ? "?revert_after=60" : "";
+        await api.put(`/api/firewall/zone-policies/${src}/${dst}${q}`, { action, log });
         msg.success(
           `${ZONE_META[src]?.label} → ${ZONE_META[dst]?.label}: ${
             action === "allow" ? "permitido" : "bloqueado"
@@ -66,7 +68,7 @@ export function ZonesMatrixPage() {
         setBusy(null);
       }
     },
-    [load, msg],
+    [load, msg, safeMode],
   );
 
   const dstZones = data?.dst_zones ?? [];
@@ -160,9 +162,18 @@ export function ZonesMatrixPage() {
         title="Matriz de Zonas"
         subtitle="Segmentação inter-zona: defina quais zonas podem se comunicar entre si e com a Internet."
         extra={
-          <Button icon={<ReloadOutlined />} onClick={load}>
-            Recarregar
-          </Button>
+          <Space>
+            <Tooltip title="Aplica a mudança e reverte automaticamente em 60s caso você perca a conexão (anti-lockout).">
+              <Space size={6}>
+                <SafetyOutlined style={{ color: safeMode ? "#52c41a" : "#888" }} />
+                <Text style={{ fontSize: 13 }}>Modo seguro</Text>
+                <Switch size="small" checked={safeMode} onChange={setSafeMode} />
+              </Space>
+            </Tooltip>
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              Recarregar
+            </Button>
+          </Space>
         }
       />
 

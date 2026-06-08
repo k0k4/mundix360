@@ -21,6 +21,8 @@ silently.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import ipaddress
 import json
 import os
@@ -126,6 +128,32 @@ MODEL_PATH = os.path.join(settings.base_dir, "dashboard/backend/data/firewall.js
 SYSCTL_FILE = "/etc/sysctl.d/99-mundix-forward.conf"
 IP_FORWARD_PROC = "/proc/sys/net/ipv4/ip_forward"
 
+# Kernel hardening of the network base (anti-spoofing + sane ICMP/redirect
+# posture). Persisted as a sysctl.d drop-in so it survives reboot, and applied
+# live. rp_filter=2 (loose reverse-path) blocks spoofed sources while staying
+# safe for asymmetric/multi-WAN setups; flip to 1 (strict) for single-WAN.
+HARDENING_FILE = "/etc/sysctl.d/98-mundix-hardening.conf"
+_HARDENING_SYSCTL: dict[str, str] = {
+    "net.ipv4.conf.all.rp_filter": "2",
+    "net.ipv4.conf.default.rp_filter": "2",
+    "net.ipv4.conf.all.accept_source_route": "0",
+    "net.ipv4.conf.default.accept_source_route": "0",
+    "net.ipv6.conf.all.accept_source_route": "0",
+    "net.ipv4.conf.all.accept_redirects": "0",
+    "net.ipv4.conf.default.accept_redirects": "0",
+    "net.ipv6.conf.all.accept_redirects": "0",
+    "net.ipv6.conf.default.accept_redirects": "0",
+    "net.ipv4.conf.all.secure_redirects": "0",
+    "net.ipv4.conf.default.secure_redirects": "0",
+    "net.ipv4.conf.all.send_redirects": "0",
+    "net.ipv4.conf.default.send_redirects": "0",
+    "net.ipv4.conf.all.log_martians": "1",
+    "net.ipv4.conf.default.log_martians": "1",
+    "net.ipv4.icmp_echo_ignore_broadcasts": "1",
+    "net.ipv4.icmp_ignore_bogus_error_responses": "1",
+    "net.ipv4.tcp_syncookies": "1",
+}
+
 # Ports that must never be DNAT'd away from the appliance (anti-lockout).
 RESERVED_TCP_PORTS = {22, settings.api_port}
 
@@ -136,6 +164,10 @@ _ALIAS_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{1,30}$")
 _PORT_RE = re.compile(r"^\d{1,5}(-\d{1,5})?$")
 _RATE_RE = re.compile(r"^\d{1,7}/(second|minute|hour|day)$")
 _LOG_OFF = {"", "0", "none", "unlimited", "off"}
+
+# Default brute-force throttle for new SSH connections arriving on the WAN.
+# Generous enough never to hinder a legitimate operator; harsh on scanners.
+_SSH_WAN_RATE = "15/minute"
 
 # --------------------------------------------------------------- validation ---
 
@@ -518,6 +550,22 @@ def render(model: dict[str, Any]) -> str:
     a("        ct state invalid drop")
     a("        ip protocol icmp icmp type { echo-request, echo-reply, "
       "destination-unreachable, time-exceeded } accept")
+    # IPv6 ICMP (Neighbour Discovery, RA, PMTUD) is REQUIRED — without this,
+    # the policy-drop inet table silently breaks all IPv6 the moment it is
+    # enabled on any interface. Kept always-on so the box is v6-safe-by-default.
+    a("        ip6 nexthdr ipv6-icmp accept")
+    # SSH management: internal zones unrestricted; from WAN, throttle *new*
+    # connections to blunt brute-force. Established sessions are accepted
+    # above, so the operator is never locked out of an active session.
+    ssh_rate = (model.get("ssh_wan_rate") or _SSH_WAN_RATE).strip()
+    if wan:
+        wan_if = _v_iface(wan)
+        # Per-source meter: each source IP gets its own budget, so a scanner
+        # flooding SSH can never exhaust the operator's allowance.
+        a(f'        iifname "{wan_if}" tcp dport 22 ct state new meter mx_ssh_wan '
+          f'{{ ip saddr limit rate {ssh_rate} burst 5 packets }} accept')
+        a(f'        iifname "{wan_if}" tcp dport 22 ct state new '
+          'log prefix "NFT-SSH-THROTTLE: " drop')
     a("        tcp dport 22 accept")
     if zones_set:
         a(f"        iifname {zones_set} udp dport 53 accept")
@@ -544,6 +592,7 @@ def render(model: dict[str, Any]) -> str:
             continue
         a(_render_zone_policy(cell, zmap, wan))
     a("        ip protocol icmp accept")
+    a("        ip6 nexthdr ipv6-icmp accept")
     a('        limit rate 5/minute log prefix "NFT-FORWARD-DROP: " drop')
     a("    }")
     a("    chain output {")
@@ -595,31 +644,146 @@ def _ensure_include() -> None:
     _atomic_write(NFTABLES_CONF, content, mode=0o755)
 
 
-def apply_model(model: dict[str, Any], *, persist: bool = True) -> dict[str, Any]:
-    """Validate, apply live (atomic), commit the managed file, persist JSON."""
+def _commit_nft(content: str) -> None:
+    """Validate (nft -c), apply live (nft -f, atomic) and commit the managed
+    file. Raises ValueError on validation failure, RuntimeError on apply."""
+    candidate = MANAGED_FILE + ".candidate"
+    os.makedirs(os.path.dirname(MANAGED_FILE), exist_ok=True)
+    _atomic_write(candidate, content)
+    try:
+        chk = shell.run(["nft", "-c", "-f", candidate], timeout=15)
+        if not chk.ok:
+            raise ValueError(f"validação nft falhou: {chk.stderr.strip()}")
+        ap = shell.run(["nft", "-f", candidate], timeout=15)
+        if not ap.ok:
+            raise RuntimeError(f"aplicação nft falhou: {ap.stderr.strip()}")
+        os.replace(candidate, MANAGED_FILE)
+        _ensure_include()
+    finally:
+        if os.path.exists(candidate):
+            try:
+                os.remove(candidate)
+            except OSError:
+                pass
+
+
+# --- confirm-or-revert (anti-lockout for risky changes) ----------------------
+# After a guarded apply we keep a snapshot of the previous live ruleset + model.
+# Unless the operator confirms connectivity within the window, the firewall
+# auto-reverts — mirroring `netplan try`. Protects against a valid-but-locking
+# ruleset (e.g. a rule that cuts the operator's own management path).
+
+_pending: dict[str, Any] | None = None
+
+# Per-request "arming" of the confirm-or-revert window. The router sets this for
+# lockout-prone mutations; _mutate reads it so any guarded change can auto-revert
+# without threading the parameter through every CRUD signature.
+_revert_ctx: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "fw_revert_after", default=0)
+
+
+@contextlib.contextmanager
+def arm_revert(seconds: int):
+    """Context manager: arm auto-revert for mutations made inside the block."""
+    tok = _revert_ctx.set(int(seconds or 0))
+    try:
+        yield
+    finally:
+        _revert_ctx.reset(tok)
+
+
+def _read_managed() -> str | None:
+    try:
+        with open(MANAGED_FILE) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _auto_revert(token: str) -> None:
+    global _pending
     with _lock:
-        content = render(model)
-        candidate = MANAGED_FILE + ".candidate"
-        os.makedirs(os.path.dirname(MANAGED_FILE), exist_ok=True)
-        _atomic_write(candidate, content)
+        if not _pending or _pending.get("token") != token:
+            return
+        prev_content = _pending.get("prev_content")
+        prev_model = _pending.get("prev_model")
         try:
-            chk = shell.run(["nft", "-c", "-f", candidate], timeout=15)
-            if not chk.ok:
-                raise ValueError(f"validação nft falhou: {chk.stderr.strip()}")
-            ap = shell.run(["nft", "-f", candidate], timeout=15)
-            if not ap.ok:
-                raise RuntimeError(f"aplicação nft falhou: {ap.stderr.strip()}")
-            os.replace(candidate, MANAGED_FILE)
-            _ensure_include()
-            if persist:
-                _save_model(model)
-        finally:
-            if os.path.exists(candidate):
-                try:
-                    os.remove(candidate)
-                except OSError:
-                    pass
-    return {"ok": True, "applied": True}
+            # prev_content is guaranteed non-None (apply_model only arms when a
+            # known-good previous ruleset exists), so this restores live nft to
+            # the last confirmed state atomically.
+            _commit_nft(prev_content)
+            if prev_model is not None:
+                _save_model(prev_model)
+            _pending = None
+        except Exception:
+            # Restore failed — do NOT pretend the change was reverted. Keep an
+            # error marker so /pending surfaces the inconsistency to the operator.
+            import logging
+            logging.getLogger(__name__).critical(
+                "auto-revert do firewall FALHOU — ruleset pode estar inconsistente",
+                exc_info=True)
+            _pending = {**_pending, "timer": None, "error": True}
+
+
+def pending_status() -> dict[str, Any]:
+    with _lock:
+        if not _pending:
+            return {"pending": False}
+        if _pending.get("error"):
+            return {"pending": True, "error": True, "token": _pending["token"],
+                    "seconds_left": 0,
+                    "message": "Falha ao reverter — verifique o ruleset."}
+        left = max(0, int(_pending["deadline"] - time.time()))
+        return {"pending": True, "token": _pending["token"],
+                "seconds_left": left}
+
+
+def confirm_pending(token: str) -> dict[str, Any]:
+    """Confirm a guarded apply, cancelling the scheduled auto-revert."""
+    global _pending
+    with _lock:
+        if not _pending or _pending.get("token") != token:
+            raise ValueError("nenhuma alteração pendente com este token")
+        timer = _pending.get("timer")
+        if timer:
+            timer.cancel()
+        _pending = None
+    return {"ok": True, "confirmed": True}
+
+
+def apply_model(model: dict[str, Any], *, persist: bool = True,
+                revert_after: int = 0) -> dict[str, Any]:
+    """Validate, apply live (atomic), commit the managed file, persist JSON.
+
+    If ``revert_after`` (seconds) > 0, snapshot the previous ruleset/model and
+    schedule an auto-revert unless ``confirm_pending(token)`` is called first.
+    """
+    global _pending
+    with _lock:
+        prev_content = _read_managed() if revert_after > 0 else None
+        prev_model = load_model() if revert_after > 0 else None
+        _commit_nft(render(model))
+        if persist:
+            _save_model(model)
+        result = {"ok": True, "applied": True}
+        # Only arm auto-revert when we captured a known-good previous ruleset to
+        # restore to. Without it (e.g. very first apply, no managed file yet) we
+        # cannot cleanly roll back, so we don't make a false safety promise.
+        if revert_after > 0 and prev_content is not None:
+            # A previous unconfirmed pending change is implicitly confirmed:
+            # the operator is clearly still reachable to issue this new one.
+            if _pending and _pending.get("timer"):
+                _pending["timer"].cancel()
+            token = uuid.uuid4().hex
+            timer = threading.Timer(revert_after, _auto_revert, args=(token,))
+            timer.daemon = True
+            timer.start()
+            _pending = {"token": token, "timer": timer,
+                        "prev_content": prev_content, "prev_model": prev_model,
+                        "deadline": time.time() + revert_after}
+            result.update({"pending": True, "token": token,
+                           "revert_after": revert_after})
+    return result
 
 
 # ---------------------------------------------------------------- CRUD ops ----
@@ -629,7 +793,7 @@ def _mutate(fn) -> dict[str, Any]:
     with _lock:
         model = load_model()
         fn(model)
-        apply_model(model)
+        apply_model(model, revert_after=_revert_ctx.get())
         return model
 
 
@@ -957,6 +1121,39 @@ def set_outbound(data: dict[str, Any]) -> dict[str, Any]:
     return _mutate(op)
 
 
+# ---------------------------------------------------------------- hardening ---
+
+def get_hardening() -> dict[str, Any]:
+    """Live + persisted state of the kernel network-hardening posture."""
+    live: dict[str, str] = {}
+    for key in _HARDENING_SYSCTL:
+        proc = "/proc/sys/" + key.replace(".", "/")
+        try:
+            with open(proc) as f:
+                live[key] = f.read().strip()
+        except OSError:
+            live[key] = ""
+    applied = all(live.get(k) == v for k, v in _HARDENING_SYSCTL.items())
+    return {
+        "persisted": os.path.isfile(HARDENING_FILE),
+        "applied": applied,
+        "desired": dict(_HARDENING_SYSCTL),
+        "live": live,
+    }
+
+
+def apply_hardening() -> dict[str, Any]:
+    """Persist the hardening drop-in and apply it live. Idempotent."""
+    with _lock:
+        body = ("# AUTO-GERADO pelo Mundix360 — hardening de rede. Não edite à mão.\n"
+                + "".join(f"{k} = {v}\n" for k, v in _HARDENING_SYSCTL.items()))
+        _atomic_write(HARDENING_FILE, body)
+        res = shell.run(["sysctl", "-p", HARDENING_FILE], timeout=15)
+        if not res.ok:
+            raise RuntimeError(f"sysctl falhou: {res.stderr.strip()}")
+    return get_hardening()
+
+
 # ---------------------------------------------------------- forwarding/sysctl --
 
 def get_forwarding() -> dict[str, Any]:
@@ -1007,6 +1204,7 @@ def overview() -> dict[str, Any]:
         "managed_active": os.path.isfile(MANAGED_FILE),
         "include_installed": _include_present(),
         "forwarding": get_forwarding(),
+        "hardening": get_hardening(),
     }
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..services import firewall, fwmanage
@@ -134,8 +134,11 @@ class ForwardingModel(BaseModel):
     enabled: bool
 
 
-def _guard(fn, *args):
+def _guard(fn, *args, revert_after: int = 0):
     try:
+        if revert_after and revert_after > 0:
+            with fwmanage.arm_revert(min(int(revert_after), 600)):
+                return fn(*args)
         return fn(*args)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -159,9 +162,11 @@ def get_zone_policies():
 
 
 @router.put("/zone-policies/{src}/{dst}")
-def put_zone_policy(src: str, dst: str, body: ZonePolicyModel):
-    _guard(fwmanage.set_zone_policy, src, dst, body.action, body.log)
-    return {"ok": True}
+def put_zone_policy(src: str, dst: str, body: ZonePolicyModel,
+                    revert_after: int = Query(0, ge=0, le=600)):
+    _guard(fwmanage.set_zone_policy, src, dst, body.action, body.log,
+           revert_after=revert_after)
+    return fwmanage.pending_status()
 
 
 @router.get("/rules")
@@ -171,23 +176,25 @@ def get_rules():
 
 
 @router.post("/rules")
-def create_rule(r: FilterRuleModel):
-    _guard(fwmanage.save_rule, r.model_dump(exclude_none=True))
-    return {"ok": True}
+def create_rule(r: FilterRuleModel, revert_after: int = Query(0, ge=0, le=600)):
+    _guard(fwmanage.save_rule, r.model_dump(exclude_none=True),
+           revert_after=revert_after)
+    return fwmanage.pending_status()
 
 
 @router.put("/rules/{rid}")
-def update_rule(rid: str, r: FilterRuleModel):
+def update_rule(rid: str, r: FilterRuleModel,
+                revert_after: int = Query(0, ge=0, le=600)):
     data = r.model_dump(exclude_none=True)
     data["id"] = rid
-    _guard(fwmanage.save_rule, data)
-    return {"ok": True}
+    _guard(fwmanage.save_rule, data, revert_after=revert_after)
+    return fwmanage.pending_status()
 
 
 @router.delete("/rules/{rid}")
-def remove_rule(rid: str):
-    _guard(fwmanage.delete_rule, rid)
-    return {"ok": True}
+def remove_rule(rid: str, revert_after: int = Query(0, ge=0, le=600)):
+    _guard(fwmanage.delete_rule, rid, revert_after=revert_after)
+    return fwmanage.pending_status()
 
 
 @router.post("/rules/{rid}/move/{direction}")
@@ -267,3 +274,27 @@ def get_forwarding():
 @router.put("/forwarding")
 def put_forwarding(f: ForwardingModel):
     return _guard(fwmanage.set_forwarding, f.enabled)
+
+
+@router.get("/hardening")
+def get_hardening():
+    return fwmanage.get_hardening()
+
+
+@router.post("/hardening/apply")
+def post_hardening():
+    return _guard(fwmanage.apply_hardening)
+
+
+class ConfirmModel(BaseModel):
+    token: str
+
+
+@router.get("/pending")
+def get_pending():
+    return fwmanage.pending_status()
+
+
+@router.post("/confirm")
+def post_confirm(body: ConfirmModel):
+    return _guard(fwmanage.confirm_pending, body.token)

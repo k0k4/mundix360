@@ -64,6 +64,7 @@ import { ServicesPage } from "./pages/system/services";
 import { AiConfigPage } from "./pages/ai-config";
 import { AssistantDock } from "./components/AssistantDock";
 import { SiderResizer } from "./components/SiderResizer";
+import { RevertBanner } from "./components/RevertBanner";
 
 const Title = ({ collapsed }: { collapsed: boolean }) => (
   <Brand collapsed={collapsed} />
@@ -320,6 +321,7 @@ export default function App() {
                   <Outlet />
                   <SiderResizer />
                   <AssistantDock />
+                  <RevertBanner />
                 </ThemedLayoutV2>
               }
             >

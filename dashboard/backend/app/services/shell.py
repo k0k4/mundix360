@@ -17,6 +17,7 @@ ALLOWED_BINARIES = {
     "systemctl",
     "systemd-analyze",
     "ip",
+    "sysctl",
     "ss",
     "dig",
     "dnsmasq",

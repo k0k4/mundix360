@@ -125,6 +125,22 @@ export const FirewallOverview = () => {
               <Statistic title="NAT de saída" value={ov.outbound_mode} />
             </Col>
           </Row>
+          <Row gutter={16} style={{ marginTop: 16 }}>
+            <Col xs={12} md={6}>
+              <Statistic title="Hardening de kernel"
+                valueStyle={{ color: ov.hardening?.applied ? "#52c41a" : "#faad14" }}
+                value={ov.hardening?.applied ? "aplicado" : "pendente"} />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic title="Anti-spoof (rp_filter)"
+                value={ov.hardening?.live?.["net.ipv4.conf.all.rp_filter"] === "0"
+                  ? "desativado" : "ativo"} />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic title="Persistido (boot)"
+                value={ov.hardening?.persisted ? "sim" : "não"} />
+            </Col>
+          </Row>
         </Card>
       )}
     </div>
