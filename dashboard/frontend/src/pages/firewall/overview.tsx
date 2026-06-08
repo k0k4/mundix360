@@ -12,20 +12,32 @@ export const FirewallOverview = () => {
   const nav = useNavigate();
   const [ov, setOv] = useState<any>(null);
   const [blocked, setBlocked] = useState(0);
+  const [health, setHealth] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [o, b] = await Promise.all([
+      const [o, b, h] = await Promise.all([
         api.get("/api/firewall/overview"),
         api.get("/api/firewall/blocklist"),
+        api.get("/api/firewall/health"),
       ]);
       setOv(o.data);
       setBlocked(b.data.count || 0);
+      setHealth(h.data);
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const reconcile = useCallback(async () => {
+    setReconciling(true);
+    try {
+      await api.post("/api/firewall/reconcile");
+      await load();
+    } finally { setReconciling(false); }
+  }, [load]);
 
   const fwd = ov?.forwarding;
 
@@ -37,6 +49,42 @@ export const FirewallOverview = () => {
         subtitle="Regras, NAT, aliases e proteção — inspirado em pfSense/OPNsense"
         extra={<Button icon={<ReloadOutlined />} onClick={load} loading={loading} />}
       />
+
+      {health && !health.healthy && (
+        <Alert
+          type="warning" showIcon style={{ marginBottom: 16 }}
+          message="Saúde da base: atenção necessária"
+          description={
+            <div>
+              <ul style={{ margin: "4px 0 8px 18px" }}>
+                {health.problems?.map((p: string, i: number) => (
+                  <li key={i}>{p}</li>
+                ))}
+              </ul>
+              {health.stale_iface_refs?.length > 0 && (
+                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                  Referências órfãs:{" "}
+                  {health.stale_iface_refs.map((s: any, i: number) => (
+                    <Tag key={i} color="red">{s.label} → {s.iface}</Tag>
+                  ))}
+                </div>
+              )}
+            </div>
+          }
+          action={
+            (!health.in_sync || !health.tables_live) && (
+              <Button size="small" type="primary" loading={reconciling}
+                onClick={reconcile} icon={<ReloadOutlined />}>
+                Reconciliar
+              </Button>
+            )
+          }
+        />
+      )}
+      {health && health.healthy && (
+        <Alert type="success" showIcon style={{ marginBottom: 16 }}
+          message="Base saudável — ruleset carregado, em sincronia, hardening ativo e sem referências órfãs." />
+      )}
 
       {ov && !ov.include_installed && (
         <Alert type="info" showIcon style={{ marginBottom: 16 }}

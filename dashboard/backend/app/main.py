@@ -52,6 +52,10 @@ def _startup() -> None:
     try:
         from .services import fwmanage as _fw
         _fw.apply_hardening()
+        # Self-heal the firewall base: re-apply the intended ruleset if the live
+        # kernel state is missing or has drifted from the model (e.g. after a
+        # reboot race or a code update that changed render()).
+        _fw.reconcile()
     except Exception:
         pass
 

@@ -52,6 +52,10 @@ CONFIG_PATHS = [
     "/etc/nftables.d",
     "/etc/dnsmasq.conf",
     "/etc/dnsmasq.d",
+    "/etc/netplan",
+    "/etc/mundix",
+    "/etc/sysctl.d/98-mundix-hardening.conf",
+    "/etc/sysctl.d/99-mundix-forward.conf",
     "/etc/nginx/sites-available/mundix360",
     "/etc/nginx/modsec",
 ]

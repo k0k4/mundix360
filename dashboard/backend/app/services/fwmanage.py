@@ -208,6 +208,29 @@ def _v_iface(v: str) -> str:
     return v
 
 
+def _live_iface_names() -> set[str]:
+    """Names of every interface currently present on the host (incl. VLAN
+    sub-interfaces). Used to reject rules that reference phantom interfaces."""
+    try:
+        from . import system
+        return {i["interface"] for i in system.interfaces() if i.get("interface")}
+    except Exception:
+        return set()
+
+
+def _v_iface_present(v: str, live: set[str] | None = None) -> str:
+    """Validate format AND that the interface actually exists right now. Use at
+    save time so a rule can never silently reference a non-existent NIC (which
+    would compile fine but never match — a false sense of protection)."""
+    _v_iface(v)
+    names = live if live is not None else _live_iface_names()
+    if names and v not in names:
+        raise ValueError(
+            f"interface '{v}' não existe neste appliance — interfaces disponíveis: "
+            + ", ".join(sorted(names)))
+    return v
+
+
 def _v_rate(v: str) -> str:
     """Validate an nftables token-bucket rate like '25/second' or '5/minute'."""
     v = (v or "").strip()
@@ -809,6 +832,11 @@ def list_rules() -> list[dict[str, Any]]:
 
 
 def save_rule(rule: dict[str, Any]) -> dict[str, Any]:
+    live = _live_iface_names()
+    if rule.get("iif"):
+        _v_iface_present(rule["iif"], live)
+    if rule.get("oif") and rule.get("chain") == "forward":
+        _v_iface_present(rule["oif"], live)
     def op(model):
         rules = model["filter_rules"]
         rid = rule.get("id")
@@ -868,6 +896,8 @@ def _check_pf(pf: dict[str, Any]) -> None:
     _vt_ip(pf["to_ip"])
     if pf.get("to_port"):
         _v_port(str(pf["to_port"]))
+    if pf.get("iif"):
+        _v_iface_present(pf["iif"])
 
 
 def save_port_forward(pf: dict[str, Any]) -> dict[str, Any]:
@@ -1110,9 +1140,14 @@ def set_outbound(data: dict[str, Any]) -> dict[str, Any]:
     if mode not in ("auto", "manual"):
         raise ValueError("modo deve ser auto ou manual")
     amap = _alias_map(load_model())
+    live = _live_iface_names()
     for s in data.get("rules", []):
         _v_addr_token(s["source_net"], amap, allow_any=False)
-        _v_iface(s.get("oif") or _wan_iface())
+        oif = s.get("oif")
+        if oif:
+            _v_iface_present(oif, live)
+        else:
+            _v_iface(_wan_iface())
     def op(model):
         for s in data.get("rules", []):
             s.setdefault("id", _new_id())
@@ -1214,3 +1249,124 @@ def _include_present() -> bool:
             return INCLUDE_LINE in f.read()
     except OSError:
         return False
+
+
+# ----------------------------------------------------- drift / reconcile / health
+
+def _tables_live() -> bool:
+    """Are the managed nft tables actually loaded in the running kernel?"""
+    r = shell.run(["nft", "list", "table", "inet", "filter"], timeout=10)
+    if not r.ok:
+        return False
+    r2 = shell.run(["nft", "list", "table", "ip", "nat"], timeout=10)
+    return r2.ok
+
+
+def _file_matches_model(model: dict[str, Any]) -> bool:
+    """Does the committed managed file equal what the model renders to now?
+    A mismatch means the on-disk ruleset drifted from the intended state
+    (manual edit, or a code change to render() not yet re-applied)."""
+    cur = _read_managed()
+    if cur is None:
+        return False
+    return cur.strip() == render(model).strip()
+
+
+def _stale_iface_refs(model: dict[str, Any], live: set[str]) -> list[dict[str, str]]:
+    """Rules/PFs/NAT referencing an interface that no longer exists. Such a rule
+    compiles but never matches — a silent hole. Surfaced, never auto-deleted."""
+    issues: list[dict[str, str]] = []
+    if not live:
+        return issues
+    for r in model.get("filter_rules", []):
+        for fld in ("iif", "oif"):
+            v = r.get(fld)
+            if v and v not in live:
+                issues.append({"kind": "rule", "id": r.get("id", "?"),
+                               "iface": v, "field": fld,
+                               "label": r.get("description") or r.get("id", "?")})
+    for p in model.get("port_forwards", []):
+        v = p.get("iif")
+        if v and v not in live:
+            issues.append({"kind": "port_forward", "id": p.get("id", "?"),
+                           "iface": v, "field": "iif",
+                           "label": p.get("description") or p.get("id", "?")})
+    for s in model.get("outbound_nat", {}).get("rules", []):
+        v = s.get("oif")
+        if v and v not in live:
+            issues.append({"kind": "outbound_nat", "id": s.get("id", "?"),
+                           "iface": v, "field": "oif",
+                           "label": s.get("source_net", s.get("id", "?"))})
+    return issues
+
+
+def _stale_zone_ifaces(live: set[str]) -> list[dict[str, str]]:
+    """Configured network zones whose interface vanished (e.g. NIC removed or
+    renamed) — their inter-zone/DNS/DHCP rules will silently stop working."""
+    out: list[dict[str, str]] = []
+    if not live:
+        return out
+    for name, z in _live_zones().items():
+        if z.get("iface") and z["iface"] not in live:
+            out.append({"zone": name, "iface": z["iface"]})
+    return out
+
+
+def health() -> dict[str, Any]:
+    """Consolidated foundation health: is the intended firewall actually loaded,
+    in sync, reboot-safe, hardened, and free of phantom references?"""
+    model = load_model()
+    live = _live_iface_names()
+    tables = _tables_live()
+    in_sync = _file_matches_model(model)
+    stale_rules = _stale_iface_refs(model, live)
+    stale_zones = _stale_zone_ifaces(live)
+    hard = get_hardening()
+    fwd = get_forwarding()
+    include = _include_present()
+    wan = _wan_iface(model)
+
+    problems: list[str] = []
+    if not tables:
+        problems.append("ruleset gerenciado não está carregado no kernel")
+    if not in_sync:
+        problems.append("ruleset em disco difere do modelo (drift)")
+    if not include:
+        problems.append("include ausente em nftables.conf (não carrega no boot)")
+    if not fwd.get("enabled"):
+        problems.append("IP forwarding desativado (roteamento inter-zona inativo)")
+    if not hard.get("applied"):
+        problems.append("hardening de kernel não aplicado")
+    if not wan:
+        problems.append("interface WAN não definida")
+    if stale_rules:
+        problems.append(f"{len(stale_rules)} regra(s) referenciam interface inexistente")
+    if stale_zones:
+        problems.append(f"{len(stale_zones)} zona(s) com interface ausente")
+
+    return {
+        "healthy": not problems,
+        "problems": problems,
+        "tables_live": tables,
+        "in_sync": in_sync,
+        "include_installed": include,
+        "forwarding": fwd.get("enabled", False),
+        "hardening_applied": hard.get("applied", False),
+        "wan_iface": wan or None,
+        "stale_iface_refs": stale_rules,
+        "stale_zone_ifaces": stale_zones,
+        "live_interfaces": sorted(live),
+    }
+
+
+def reconcile() -> dict[str, Any]:
+    """Self-heal: if the intended ruleset isn't loaded or has drifted on disk,
+    re-render and re-apply the model. Safe (it applies the *intended* state) and
+    idempotent. Run at boot and on demand so the box converges automatically."""
+    with _lock:
+        model = load_model()
+        need = (not _tables_live()) or (not _file_matches_model(model))
+        if not need:
+            return {"reconciled": False, "reason": "already in sync"}
+        apply_model(model)
+        return {"reconciled": True}

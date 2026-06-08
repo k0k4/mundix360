@@ -298,3 +298,13 @@ def get_pending():
 @router.post("/confirm")
 def post_confirm(body: ConfirmModel):
     return _guard(fwmanage.confirm_pending, body.token)
+
+
+@router.get("/health")
+def get_health():
+    return fwmanage.health()
+
+
+@router.post("/reconcile")
+def post_reconcile():
+    return _guard(fwmanage.reconcile)
