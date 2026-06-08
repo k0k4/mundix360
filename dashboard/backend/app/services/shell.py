@@ -18,6 +18,7 @@ ALLOWED_BINARIES = {
     "systemd-analyze",
     "ip",
     "sysctl",
+    "ping",
     "ss",
     "dig",
     "dnsmasq",
@@ -55,7 +56,8 @@ def _is_allowed(binary: str) -> bool:
     return False
 
 
-def run(args: list[str], timeout: int = 20, check: bool = False) -> CommandResult:
+def run(args: list[str], timeout: int = 20, check: bool = False,
+        input_text: str | None = None) -> CommandResult:
     if not args:
         raise CommandNotAllowed("empty command")
     binary = args[0]
@@ -68,6 +70,7 @@ def run(args: list[str], timeout: int = 20, check: bool = False) -> CommandResul
             text=True,
             timeout=timeout,
             check=False,
+            input=input_text,
         )
     except subprocess.TimeoutExpired:
         return CommandResult(returncode=124, stdout="", stderr="timeout")

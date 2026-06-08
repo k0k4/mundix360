@@ -21,6 +21,7 @@ import {
   StopOutlined,
   GlobalOutlined,
   ClusterOutlined,
+  DeploymentUnitOutlined,
   PartitionOutlined,
   TagOutlined,
   NodeIndexOutlined,
@@ -50,6 +51,7 @@ import { RulesetPage } from "./pages/firewall/ruleset";
 import { ZoneList, ZoneCreate, ZoneEdit } from "./pages/network/zones";
 import { InterfacesPage } from "./pages/network/interfaces";
 import { VlansPage } from "./pages/network/vlans";
+import { MultiWanPage } from "./pages/network/multiwan";
 import { ReservationsPage } from "./pages/network/reservations";
 import { LeasesPage } from "./pages/network/leases";
 import { DnsPage } from "./pages/network/dns";
@@ -244,6 +246,15 @@ export default function App() {
               },
             },
             {
+              name: "multiwan",
+              list: "/network/multiwan",
+              meta: {
+                parent: "network-group",
+                label: "Multi-WAN",
+                icon: <DeploymentUnitOutlined />,
+              },
+            },
+            {
               name: "zones",
               list: "/network/zones",
               create: "/network/zones/new",
@@ -350,6 +361,7 @@ export default function App() {
               <Route path="/network">
                 <Route path="interfaces" element={<InterfacesPage />} />
                 <Route path="vlans" element={<VlansPage />} />
+                <Route path="multiwan" element={<MultiWanPage />} />
                 <Route path="zones" element={<ZoneList />} />
                 <Route path="zones/new" element={<ZoneCreate />} />
                 <Route path="zones/:id/edit" element={<ZoneEdit />} />

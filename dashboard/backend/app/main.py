@@ -23,6 +23,7 @@ from .routers import (
     firewall,
     flows,
     logs,
+    multiwan,
     network,
     overview,
     system,
@@ -56,6 +57,9 @@ def _startup() -> None:
         # kernel state is missing or has drifted from the model (e.g. after a
         # reboot race or a code update that changed render()).
         _fw.reconcile()
+        # Multi-WAN monitor (no-op unless the operator enabled it).
+        from .services import multiwan as _mw
+        _mw.start_monitor()
     except Exception:
         pass
 
@@ -75,7 +79,7 @@ def health():
 
 
 _protected = [Depends(require_auth)]
-for r in (overview, alerts, firewall, network, content, flows, logs, system, ai, threatintel, waf, backup):
+for r in (overview, alerts, firewall, network, content, flows, logs, system, ai, threatintel, waf, backup, multiwan):
     app.include_router(r.router, dependencies=_protected)
 
 
