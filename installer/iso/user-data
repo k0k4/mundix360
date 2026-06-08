@@ -1,0 +1,41 @@
+#cloud-config
+# =============================================================================
+# Mundix Security 360 — autoinstall (Ubuntu 24.04 / subiquity)
+#
+# Instalação 100% desatendida. Ao dar boot pelo pendrive, particiona o disco,
+# instala a base mínima do Ubuntu e agenda a instalação do Mundix para o
+# PRIMEIRO BOOT real (serviço mundix-firstinstall), que roda o install.sh
+# offline a partir do bundle embarcado na ISO (/cdrom/mundix).
+#
+# ATENÇÃO: este perfil APAGA o disco do alvo. Use em hardware dedicado.
+# =============================================================================
+autoinstall:
+  version: 1
+  locale: pt_BR.UTF-8
+  keyboard:
+    layout: br
+  # Identidade temporária do SO. TROQUE a senha no primeiro acesso (ou via UI).
+  # Usuário: mundix  /  Senha: mundix360
+  identity:
+    hostname: mundix
+    username: mundix
+    password: "$6$svfWwGjDNkxZPW82$OhPO8L0CfcX7l4ef1MmOJm.T3I2VqGPqCYEvix6hYidZqayEtoLj4wK.RsJDeW8qHufGZ//7C2ITFpGUTOyl6/"
+  ssh:
+    install-server: true
+    allow-pw: true
+  # Apaga e usa LVM no disco inteiro (appliance dedicada).
+  storage:
+    layout:
+      name: lvm
+  # Sem pacotes extras da rede — tudo vem do bundle offline.
+  packages: []
+  # Não atualiza pela internet durante a instalação (offline-friendly).
+  updates: security
+  shutdown: reboot
+  late-commands:
+    # Copia o bundle do Mundix (embarcado na ISO) para o sistema instalado.
+    - mkdir -p /target/opt/mundix-appliance
+    - cp -a /cdrom/mundix/. /target/opt/mundix-appliance/
+    # Instala o serviço de primeira-instalação e o habilita no alvo.
+    - cp /cdrom/mundix/installer/iso/mundix-firstinstall.service /target/etc/systemd/system/mundix-firstinstall.service
+    - curtin in-target --target=/target -- systemctl enable mundix-firstinstall.service

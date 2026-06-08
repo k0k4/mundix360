@@ -1,0 +1,22 @@
+[Unit]
+Description=Mundix Security 360 — Primeira instalação (offline, no 1º boot)
+# Roda só uma vez, no primeiro boot real, com rede/systemd já completos.
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/mundix/install/firstboot
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Instala o Mundix a partir do bundle embarcado e roda o assistente inicial.
+# --yes = não-interativo (LAN padrão 192.168.1.1, senha mestra aleatória
+# impressa no log). O operador refina WAN/LAN/senha no painel depois.
+ExecStart=/opt/mundix-appliance/installer/install.sh --offline --yes
+# Após instalar, se desabilita para nunca rodar de novo.
+ExecStartPost=/bin/systemctl disable mundix-firstinstall.service
+StandardOutput=append:/var/log/mundix-firstinstall.log
+StandardError=append:/var/log/mundix-firstinstall.log
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

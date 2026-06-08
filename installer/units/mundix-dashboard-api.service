@@ -1,0 +1,18 @@
+[Unit]
+Description=Mundix Security 360 — Dashboard API (FastAPI)
+Documentation=https://github.com/k0k4/mundix360
+After=network.target clickhouse-server.service valkey-server.service
+Wants=clickhouse-server.service valkey-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mundix360/dashboard/backend
+EnvironmentFile=-/opt/mundix360/dashboard/backend/.env
+# Frontend já vem pré-buildado no appliance (dist/), por isso a API não depende
+# de um serviço de build. nginx faz o proxy reverso para esta porta.
+ExecStart=/opt/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8100
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

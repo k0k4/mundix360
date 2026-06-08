@@ -1,0 +1,19 @@
+[Unit]
+Description=Mundix Security 360 — Active Response (processador de fila de bloqueio)
+Documentation=https://github.com/k0k4/mundix360
+# Perfil núcleo: depende apenas do firewall. A dependência de vector.service
+# (camada de observabilidade) foi removida — o appliance lê a fila localmente.
+After=nftables.service
+Wants=nftables.service
+
+[Service]
+Type=simple
+ExecStart=/opt/mundix360/scripts/active-response/block-queue-processor.sh
+Restart=always
+RestartSec=10
+RuntimeDirectory=mundix-ar
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Mundix Security 360 — Triagem de alertas SIEM via IA (OpenRouter)
+Documentation=https://github.com/k0k4/mundix360
+After=network-online.target clickhouse-server.service
+Wants=clickhouse-server.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/opt/mundix360/configs/openrouter.env
+ExecStart=/opt/venv/bin/python /opt/mundix360/scripts/security/triage.py
+StandardOutput=append:/opt/mundix360/data/siem/triage.log
+StandardError=append:/opt/mundix360/data/siem/triage.log
+
+[Install]
+WantedBy=multi-user.target

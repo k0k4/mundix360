@@ -1,0 +1,11 @@
+[Unit]
+Description=Mundix Security 360 — Agenda de triagem SIEM (a cada 15 min)
+Requires=mundix-triage.service
+
+[Timer]
+OnBootSec=300
+OnUnitActiveSec=15min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
