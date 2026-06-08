@@ -169,6 +169,12 @@ _LOG_OFF = {"", "0", "none", "unlimited", "off"}
 # Generous enough never to hinder a legitimate operator; harsh on scanners.
 _SSH_WAN_RATE = "15/minute"
 
+# Management web UI ports. These are ALWAYS accepted on input (same anti-lockout
+# principle as SSH dport 22): a policy-drop input chain must never strand the
+# operator out of the dashboard. nginx publishes the panel here; WAN exposure can
+# be tightened later by the operator, but reachability is non-negotiable.
+_MGMT_WEB_PORTS = "{ 80, 443 }"
+
 # --------------------------------------------------------------- validation ---
 
 
@@ -590,6 +596,9 @@ def render(model: dict[str, Any]) -> str:
         a(f'        iifname "{wan_if}" tcp dport 22 ct state new '
           'log prefix "NFT-SSH-THROTTLE: " drop')
     a("        tcp dport 22 accept")
+    # Management web UI anti-lockout: the dashboard must stay reachable even
+    # under a policy-drop input chain (mirrors the SSH rule above).
+    a(f"        tcp dport {_MGMT_WEB_PORTS} accept")
     if zones_set:
         a(f"        iifname {zones_set} udp dport 53 accept")
         a(f"        iifname {zones_set} tcp dport 53 accept")
