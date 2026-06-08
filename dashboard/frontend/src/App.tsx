@@ -22,6 +22,7 @@ import {
   GlobalOutlined,
   ClusterOutlined,
   PartitionOutlined,
+  TagOutlined,
   NodeIndexOutlined,
   FileTextOutlined,
   CloudServerOutlined,
@@ -48,6 +49,7 @@ import { ZonesMatrixPage } from "./pages/firewall/zones-matrix";
 import { RulesetPage } from "./pages/firewall/ruleset";
 import { ZoneList, ZoneCreate, ZoneEdit } from "./pages/network/zones";
 import { InterfacesPage } from "./pages/network/interfaces";
+import { VlansPage } from "./pages/network/vlans";
 import { ReservationsPage } from "./pages/network/reservations";
 import { LeasesPage } from "./pages/network/leases";
 import { DnsPage } from "./pages/network/dns";
@@ -232,13 +234,22 @@ export default function App() {
               },
             },
             {
+              name: "vlans",
+              list: "/network/vlans",
+              meta: {
+                parent: "network-group",
+                label: "VLANs",
+                icon: <TagOutlined />,
+              },
+            },
+            {
               name: "zones",
               list: "/network/zones",
               create: "/network/zones/new",
               edit: "/network/zones/:id/edit",
               meta: {
                 parent: "network-group",
-                label: "VLANs / Zonas",
+                label: "Zonas / Sub-redes",
                 icon: <PartitionOutlined />,
               },
             },
@@ -336,6 +347,7 @@ export default function App() {
 
               <Route path="/network">
                 <Route path="interfaces" element={<InterfacesPage />} />
+                <Route path="vlans" element={<VlansPage />} />
                 <Route path="zones" element={<ZoneList />} />
                 <Route path="zones/new" element={<ZoneCreate />} />
                 <Route path="zones/:id/edit" element={<ZoneEdit />} />

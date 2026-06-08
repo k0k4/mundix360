@@ -20,6 +20,7 @@ ALLOWED_BINARIES = {
     "ss",
     "dig",
     "dnsmasq",
+    "netplan",
     "df",
     "free",
     "uptime",

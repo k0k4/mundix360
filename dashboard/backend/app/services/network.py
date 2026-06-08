@@ -109,10 +109,12 @@ def _zone_from_conf(name: str, path: str) -> dict[str, Any]:
 
 
 def _discover_zone_files() -> list[str]:
-    names: list[str] = list(ZONE_INTERFACES.keys())
+    """Discover zones purely from the dnsmasq config files actually present —
+    never seed hardcoded names, so the appliance reflects only its real config."""
+    names: list[str] = []
     d = settings.dnsmasq_etc_dir
     if os.path.isdir(d):
-        for fn in os.listdir(d):
+        for fn in sorted(os.listdir(d)):
             if not fn.endswith(".conf"):
                 continue
             name = fn[:-5]
@@ -471,13 +473,18 @@ def dhcp_pools() -> list[dict[str, Any]]:
 
 
 def _zone_for_ip(ip: str) -> str | None:
+    """Map an IP to a zone using the live zone subnets (adaptive, never hardcoded)."""
     try:
-        import ipaddress
-
         addr = ipaddress.ip_address(ip)
-        for name, meta in ZONE_INTERFACES.items():
-            if addr in ipaddress.ip_network(meta["net"]):
-                return name
     except ValueError:
-        pass
+        return None
+    for z in list_zones():
+        net = z.get("network")
+        if not net:
+            continue
+        try:
+            if addr in ipaddress.ip_network(net):
+                return z["zone"]
+        except ValueError:
+            continue
     return None

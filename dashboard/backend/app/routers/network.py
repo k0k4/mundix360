@@ -1,10 +1,10 @@
 """Network: VLAN/zones (CRUD), DHCP leases and static reservations."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ..services import dns, fwmanage, network, system
+from ..services import dns, fwmanage, netiface, network, system
 
 router = APIRouter(prefix="/api/network", tags=["network"])
 
@@ -128,6 +128,74 @@ def reserve_lease(mac: str):
 @router.get("/interfaces")
 def interfaces():
     return {"interfaces": system.interfaces()}
+
+
+# --------------------------------------- adaptive interface/VLAN management ---
+
+class InterfaceConfigModel(BaseModel):
+    description: str | None = None
+    admin_enabled: bool | None = None
+    ipv4_mode: str | None = None  # dhcp | static | none
+    address: str | None = None    # CIDR, e.g. 192.168.10.1/24
+    gateway: str | None = None
+    nameservers: list[str] = Field(default_factory=list)
+    mtu: int | None = None
+    force: bool = False
+
+
+class VlanModel(BaseModel):
+    parent: str
+    vlan_id: int
+    name: str | None = None
+    description: str = ""
+    ipv4_mode: str = "none"
+    address: str | None = None
+    gateway: str | None = None
+    nameservers: list[str] = Field(default_factory=list)
+    mtu: int | None = None
+
+
+@router.get("/interfaces/manage")
+def interfaces_manage():
+    """Rich, adaptive inventory (live kernel + netplan config + roles) used by the
+    professional Interfaces management screen."""
+    return netiface.list_interfaces()
+
+
+@router.put("/interfaces/{name}")
+def update_interface(name: str, cfg: InterfaceConfigModel, request: Request):
+    try:
+        protect = netiface._iface_for_ip(request.client.host if request.client else None)
+        return netiface.set_interface(name, protect_iface=protect, **cfg.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.get("/vlans")
+def list_vlans():
+    return {"vlans": netiface.list_vlans()}
+
+
+@router.post("/vlans")
+def create_vlan(v: VlanModel):
+    try:
+        return netiface.create_vlan(**v.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.delete("/vlans/{name}")
+def delete_vlan(name: str):
+    try:
+        return netiface.delete_vlan(name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 class WanModel(BaseModel):

@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     content_blocklist_file: str = "/etc/dnsmasq.d/mundix-content-block.conf"
     dnsmasq_log_file: str = "/var/log/dnsmasq/dnsmasq.log"
 
+    # Network interface/VLAN management (netplan, networkd renderer)
+    netplan_dir: str = "/etc/netplan"
+    iface_meta_file: str = "/etc/mundix/interfaces.json"
+    netplan_backup_dir: str = "/etc/mundix/netplan-backups"
+
     # AI assistant (Qwen3.7-Max via DashScope, OpenAI-compatible)
     dashscope_api_key: str = Field(
         "", validation_alias=AliasChoices("DASHSCOPE_API_KEY", "MUNDIX_DASHSCOPE_API_KEY")
