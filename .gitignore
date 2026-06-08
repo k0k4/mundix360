@@ -16,6 +16,8 @@ dashboard/backend/data/
 # Segredos
 *.env
 !**/.env.example
+# Exceção: o manifesto de implantação é config (pacotes/units/caminhos), não segredo.
+!installer/manifest.env
 configs/openrouter.env
 
 # Node / Vite / Next.js

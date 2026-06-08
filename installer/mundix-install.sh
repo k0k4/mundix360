@@ -147,18 +147,31 @@ phase_code() {
 # ---------------------------------------------------------------- fase: apt ----
 phase_apt() {
   step "Pacotes do sistema (online)"
-  # Repositórios de terceiros (ClickHouse, etc.) — campos separados por '|'.
-  local entry name line key
+  # Repositórios de terceiros (ClickHouse, etc.) — campos separados por '|':
+  #   nome|linha-deb|url-da-chave-armored|fingerprint-keyserver(opcional)
+  local entry name line key keyid keyring
   for entry in "${APT_THIRDPARTY_REPOS[@]:-}"; do
     [[ -z "$entry" ]] && continue
-    IFS='|' read -r name line key <<<"$entry"
-    if [[ ! -f "/etc/apt/sources.list.d/mundix-${name}.list" ]]; then
+    IFS='|' read -r name line key keyid <<<"$entry"
+    keyring="/usr/share/keyrings/mundix-${name}.gpg"
+    if [[ ! -s "$keyring" ]]; then
       log "repositório de terceiros: ${name}"
-      curl -fsSL "$key" | gpg --dearmor -o "/usr/share/keyrings/mundix-${name}.gpg" 2>>"$LOG" \
-        || warn "falha ao buscar chave de ${name}"
-      echo "deb [signed-by=/usr/share/keyrings/mundix-${name}.gpg] ${line}" \
-        > "/etc/apt/sources.list.d/mundix-${name}.list"
+      rm -f "$keyring"
+      if ! curl -fsSL "$key" 2>>"$LOG" | gpg --dearmor -o "$keyring" 2>>"$LOG" || [[ ! -s "$keyring" ]]; then
+        rm -f "$keyring"
+        if [[ -n "${keyid:-}" ]]; then
+          warn "chave de ${name} via URL indisponível; tentando keyserver…"
+          gpg --no-default-keyring --keyring "$keyring" \
+              --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys "$keyid" >>"$LOG" 2>&1 \
+            && chmod 0644 "$keyring" \
+            || warn "falha ao buscar chave de ${name} (keyserver)"
+        else
+          warn "falha ao buscar chave de ${name}"
+        fi
+      fi
     fi
+    echo "deb [signed-by=${keyring}] ${line}" \
+      > "/etc/apt/sources.list.d/mundix-${name}.list"
   done
 
   log "apt-get update…"
@@ -219,6 +232,10 @@ phase_config() {
   [[ -e /etc/nginx/sites-enabled/default ]] && rm -f /etc/nginx/sites-enabled/default
   install -d -m 0755 /etc/nginx/modsec
   _seed "${cfg}/modsec-main.conf" /etc/nginx/modsec/main.conf
+  # Overrides referenciados pelo main.conf (engine ON + pontos de tuning do CRS).
+  _seed "${cfg}/modsec-overrides.conf"  /etc/nginx/modsec/mundix-overrides.conf
+  _seed "${cfg}/modsec-before-crs.conf" /etc/nginx/modsec/mundix-before-crs.conf
+  _seed "${cfg}/modsec-after-crs.conf"  /etc/nginx/modsec/mundix-after-crs.conf
 
   # nftables base ADAPTATIVO (sem NIC hardcoded; libera 22/80/443).
   _seed "${cfg}/nftables-base.conf" /etc/nftables.conf 0755
@@ -227,6 +244,7 @@ phase_config() {
   # dnsmasq base (DNS/DHCP + filtro de conteúdo é escrito em runtime pela app).
   if [[ -d "${cfg}/dnsmasq-base" ]]; then
     install -d -m 0755 /etc/dnsmasq.d
+    install -d -m 0755 /var/log/dnsmasq   # log-facility referenciado em 00-global.conf
     local f
     for f in "${cfg}/dnsmasq-base"/*; do
       [[ -e "$f" ]] && _seed "$f" "/etc/dnsmasq.d/$(basename "$f")"
@@ -320,6 +338,28 @@ phase_units() {
 }
 
 # -------------------------------------------------- fase: subir + verificar ----
+_waf_selftest() {
+  # O ModSecurity do Ubuntu 24.04 (noble) tem um bug de ABI (transição t64):
+  # libnginx-mod-http-modsecurity 1.0.3 + libmodsecurity3t64 3.0.12 fazem o
+  # worker do nginx estourar (malloc gigante → SIGSEGV) em QUALQUER request.
+  # Se o WAF estiver instável aqui, desligamos (fail-open) para não derrubar o
+  # painel — o firewall/IDS continuam protegendo a gestão.
+  local site=/etc/nginx/sites-available/mundix360
+  grep -q '^[[:space:]]*modsecurity on;' "$site" 2>/dev/null || return 0
+  local code
+  code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1:8099/ 2>/dev/null || echo 000)
+  case "$code" in
+    2*|3*|4*) ok "WAF (ModSecurity) operacional"; return 0 ;;
+  esac
+  warn "WAF (ModSecurity) instável neste sistema (bug t64 do pacote do Ubuntu, HTTP=${code}) — desativando para não derrubar o painel."
+  sed -i 's/^\([[:space:]]*\)modsecurity on;.*/\1modsecurity off;  # auto: ModSecurity t64 crash (Ubuntu 24.04)/' "$site"
+  if nginx -t >>"$LOG" 2>&1 && systemctl reload nginx >>"$LOG" 2>&1; then
+    warn "WAF desativado. Reabilite (modsecurity on) após corrigir o pacote ModSecurity."
+  else
+    err "falha ao desativar o WAF automaticamente; veja ${LOG}"
+  fi
+}
+
 phase_services() {
   step "Subindo e verificando serviços"
 
@@ -348,6 +388,7 @@ phase_services() {
   [[ "$ok_api" == "1" ]] && ok "API respondendo" || warn "API não respondeu em 30s (veja ${LOG})"
 
   start_verify nginx.service 1 || true
+  _waf_selftest
 
   # Serviços auxiliares do Mundix.
   for u in "${MUNDIX_UNITS[@]}"; do

@@ -142,7 +142,11 @@ def get_zone(name: str) -> dict[str, Any] | None:
 def _render_zone(z: dict[str, Any]) -> str:
     lines = [f"# Mundix360 zone '{z['zone']}' - managed by dashboard"]
     lines.append(f"interface={z['interface']}")
-    lines.append("bind-interfaces")
+    # bind-dynamic (não bind-interfaces): o dnsmasq sobe mesmo que a interface
+    # ou o IP ainda não existam, e passa a servir quando aparecerem. Evita que o
+    # serviço falhe num appliance recém-instalado cujas NICs ainda não foram
+    # mapeadas para as zonas.
+    lines.append("bind-dynamic")
     if z.get("listen_address"):
         lines.append(f"listen-address={z['listen_address']}")
     if z.get("dhcp_start") and z.get("dhcp_end"):
