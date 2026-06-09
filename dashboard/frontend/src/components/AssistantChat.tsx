@@ -35,6 +35,40 @@ const TOKEN = import.meta.env.VITE_API_TOKEN as string | undefined;
 export const authHeaders = (): Record<string, string> =>
   TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
 
+// Friendly, phase-aware status labels shown while the agent works, so the
+// operator never thinks the chat froze during a long "thinking"/"coding" gap.
+const TOOL_PHASE: Record<string, string> = {
+  read_file: "Lendo arquivo…",
+  list_dir: "Explorando arquivos…",
+  search_code: "Procurando no código…",
+  propose_code_edit: "Editando o código…",
+  propose_code_change: "Escrevendo o código…",
+  run_shell: "Executando comando…",
+  service_action: "Gerenciando serviço…",
+  get_overview: "Coletando status do sistema…",
+  query_alerts: "Consultando alertas…",
+  block_domain: "Ajustando filtro de domínios…",
+  unblock_domain: "Ajustando filtro de domínios…",
+  block_ip: "Ajustando regras de IP…",
+  unblock_ip: "Ajustando regras de IP…",
+  add_port_rule: "Criando regra de firewall…",
+  manage_reservation: "Ajustando reservas DHCP…",
+  manage_zone: "Ajustando zonas DNS…",
+  backup_run: "Trabalhando no backup…",
+  backup_status: "Verificando o backup…",
+  threat_intel_update: "Atualizando inteligência de ameaças…",
+  threat_intel_status: "Verificando inteligência de ameaças…",
+  remember: "Anotando na memória…",
+  forget: "Atualizando a memória…",
+  read_system_memory: "Consultando a memória…",
+  update_system_memory: "Atualizando a memória…",
+  post_journal: "Registrando no diário…",
+  read_journal: "Consultando o diário…",
+};
+
+const phaseFor = (name: string): string =>
+  TOOL_PHASE[name] || `Executando ${name}…`;
+
 export type ToolCard = {
   kind: "tool";
   name: string;
@@ -195,6 +229,7 @@ export function AssistantChat({
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [status, setStatus] = useState<string>("");
   const [pwModal, setPwModal] = useState<CodeChange | null>(null);
   const [password, setPassword] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -262,6 +297,7 @@ export function AssistantChat({
     lastUserRef.current = text;
     setItems((prev) => [...prev, { kind: "text", role: "user", content: text }]);
     setStreaming(true);
+    setStatus("Pensando…");
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -314,8 +350,10 @@ export function AssistantChat({
           }
         } else if (event === "token") {
           assistantBuf += data.text || "";
+          setStatus("Escrevendo resposta…");
           ensureAssistant();
         } else if (event === "tool_started") {
+          setStatus(phaseFor(data.name));
           setItems((prev) => [
             ...prev,
             { kind: "tool", name: data.name, args: data.arguments || {} },
@@ -347,7 +385,9 @@ export function AssistantChat({
             }
             return copy;
           });
+          setStatus("Processando resultado…");
         } else if (event === "code_change_pending") {
+          setStatus("Aguardando sua confirmação…");
           setItems((prev) => [
             ...prev,
             {
@@ -392,6 +432,7 @@ export function AssistantChat({
         antdMessage.error(e?.message || "Falha na conexão");
     } finally {
       setStreaming(false);
+      setStatus("");
       abortRef.current = null;
     }
   };
@@ -566,7 +607,47 @@ export function AssistantChat({
             );
           })
         )}
+
+        {streaming && (
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              marginBottom: 14,
+              alignItems: "center",
+            }}
+          >
+            <Avatar
+              icon={<RobotOutlined />}
+              style={{ background: "#1668dc", flexShrink: 0 }}
+            />
+            <div
+              style={{
+                background: "#111a2e",
+                border: "1px solid #1f3257",
+                borderRadius: 10,
+                padding: "8px 14px",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <Spin size="small" />
+              <Text
+                style={{ color: "#94a3b8", fontSize: 13 }}
+                className="mundix-thinking"
+              >
+                {status || "Pensando…"}
+              </Text>
+            </div>
+          </div>
+        )}
       </div>
+
+      <style>{`
+        @keyframes mundixPulse { 0%,100% { opacity: .55 } 50% { opacity: 1 } }
+        .mundix-thinking { animation: mundixPulse 1.4s ease-in-out infinite; }
+      `}</style>
 
       <div
         style={{
