@@ -45,10 +45,19 @@ const roleTag = (i: Iface) => {
 };
 
 const stateTag = (i: Iface) => {
-  if (i.admin_enabled === false) return <Tag color="default" icon={<DisconnectOutlined />}>desabilitada</Tag>;
-  if (i.state === "up") return <Tag color="green" icon={<ThunderboltOutlined />}>up</Tag>;
-  if (i.carrier === false) return <Tag color="orange">sem cabo</Tag>;
-  return <Tag color="default" icon={<DisconnectOutlined />}>{i.state || "?"}</Tag>;
+  // Estado administrativo (ligado/desligado pelo sistema)
+  const adminTag = i.admin_enabled === false
+    ? <Tag color="red" icon={<DisconnectOutlined />}>Desligada</Tag>
+    : <Tag color="green" icon={<ThunderboltOutlined />}>Ligada</Tag>;
+  
+  // Estado físico (cabo conectado/desconectado)
+  const linkTag = i.carrier === false
+    ? <Tag color="orange">Sem cabo</Tag>
+    : i.carrier === true
+      ? <Tag color="blue">Cabo OK</Tag>
+      : <Tag color="default">Link ?</Tag>;
+  
+  return <Space size={4}>{adminTag}{linkTag}</Space>;
 };
 
 const modeLabel: Record<string, string> = { dhcp: "DHCP", static: "Estático", none: "Sem IP" };
