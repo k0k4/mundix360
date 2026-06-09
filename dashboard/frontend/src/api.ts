@@ -29,6 +29,11 @@ api.interceptors.response.use(
         window.location.assign(target);
       }
     }
+    // Normalize FastAPI errors: {"detail": "msg"} -> Refine expects error.message
+    if (error?.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      error.message = typeof detail === "string" ? detail : JSON.stringify(detail);
+    }
     return Promise.reject(error);
   }
 );
