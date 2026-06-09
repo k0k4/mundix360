@@ -56,6 +56,7 @@ import { ZoneList, ZoneCreate, ZoneEdit } from "./pages/network/zones";
 import { InterfacesPage } from "./pages/network/interfaces";
 import { VlansPage } from "./pages/network/vlans";
 import { MultiWanPage } from "./pages/network/multiwan";
+import { WireGuardPage } from "./pages/vpn/wireguard";
 import { ReservationsPage } from "./pages/network/reservations";
 import { LeasesPage } from "./pages/network/leases";
 import { DnsPage } from "./pages/network/dns";
@@ -301,6 +302,19 @@ export default function App() {
               },
             },
             {
+              name: "vpn-group",
+              meta: { label: "VPN", icon: <SafetyCertificateOutlined /> },
+            },
+            {
+              name: "wireguard",
+              list: "/vpn/wireguard",
+              meta: {
+                parent: "vpn-group",
+                label: "WireGuard",
+                icon: <DeploymentUnitOutlined />,
+              },
+            },
+            {
               name: "domains",
               list: "/content",
               create: "/content/new",
@@ -389,6 +403,10 @@ export default function App() {
                 />
                 <Route path="leases" element={<LeasesPage />} />
                 <Route path="dns" element={<DnsPage />} />
+              </Route>
+
+              <Route path="/vpn">
+                <Route path="wireguard" element={<WireGuardPage />} />
               </Route>
 
               <Route path="/content">

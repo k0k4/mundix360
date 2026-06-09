@@ -29,6 +29,7 @@ from .routers import (
     overview,
     system,
     threatintel,
+    vpn,
     waf,
 )
 from .services.ai import memory as ai_memory
@@ -87,7 +88,7 @@ def health():
 app.include_router(auth.router)
 
 _protected = [Depends(protect)]
-for r in (overview, alerts, firewall, network, content, flows, logs, system, ai, threatintel, waf, backup, multiwan):
+for r in (overview, alerts, firewall, network, content, flows, logs, system, ai, threatintel, waf, backup, multiwan, vpn):
     app.include_router(r.router, dependencies=_protected)
 
 

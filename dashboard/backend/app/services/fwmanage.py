@@ -550,6 +550,17 @@ def _render_zone_policy(c: dict[str, Any], zmap: dict[str, dict[str, str]],
     return "        " + " ".join(parts)
 
 
+def _vpn_lines(kind: str, wan: str | None) -> list[str]:
+    """Fetch nft rule fragments from the VPN subsystem (lazy + fail-safe), so a
+    policy-drop firewall lets active tunnels through. Returns [] if VPN is
+    disabled/unavailable — VPN state can never break the firewall render."""
+    try:
+        from . import vpn
+        return getattr(vpn, kind)(wan)
+    except Exception:
+        return []
+
+
 def render(model: dict[str, Any]) -> str:
     amap = _alias_map(model)
     rules = sorted(model.get("filter_rules", []), key=lambda r: r.get("order", 0))
@@ -605,12 +616,16 @@ def render(model: dict[str, Any]) -> str:
         a(f"        iifname {zones_set} udp sport 68 udp dport 67 accept")
     for r in in_rules:
         a(_render_filter_rule(r, amap))
+    for line in _vpn_lines("nft_input_accepts", wan):
+        a("        " + line)
     a('        limit rate 5/minute log prefix "NFT-INPUT-DROP: " drop')
     a("    }")
     a("    chain forward {")
     a("        type filter hook forward priority 0; policy drop;")
     a("        ct state established,related accept")
     a("        ct state invalid drop")
+    for line in _vpn_lines("nft_forward_accepts", wan):
+        a("        " + line)
     for pf in pfs:
         a(_render_pf_forward_accept(pf, amap, wan))
     for r in fw_rules:
@@ -653,6 +668,8 @@ def render(model: dict[str, Any]) -> str:
         if not net:
             raise ValueError("NAT de saída exige rede/alias de origem")
         a(f'        oifname "{oif}" ip saddr {net} masquerade')
+    for line in _vpn_lines("nft_postrouting_masq", wan):
+        a("        " + line)
     a("    }")
     a("}")
     a("")
@@ -1379,3 +1396,11 @@ def reconcile() -> dict[str, Any]:
             return {"reconciled": False, "reason": "already in sync"}
         apply_model(model)
         return {"reconciled": True}
+
+
+def reapply() -> dict[str, Any]:
+    """Force a re-render + re-apply of the current model. Used by subsystems
+    (e.g. VPN) whose firewall openings are merged into render() but live outside
+    the firewall model, so a plain reconcile() can't detect their drift."""
+    with _lock:
+        return apply_model(load_model())
