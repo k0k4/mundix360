@@ -1,0 +1,11 @@
+[Unit]
+Description=Mundix Security 360 — Atualização diária das regras Suricata
+Documentation=https://github.com/k0k4/mundix360
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

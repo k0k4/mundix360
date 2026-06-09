@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!--
+  Mundix Security 360 - perfil de baixo consumo para ClickHouse (Intel Atom
+  E3827, 2 nucleos). Os logs de auto-instrumentacao (trace_log, metric_log,
+  asynchronous_metric_log ~30M linhas/dia, text_log, part_log...) fazem
+  inserts/merges continuos e sao inuteis num SMB appliance. Desativa-los e o
+  maior ganho de CPU/IO. Pools de fundo NAO sao reduzidos (threads ociosas nao
+  custam CPU e reduzi-las quebra as mutacoes do triage). Mantidos: query_log e
+  error_log (pequenos e uteis para diagnostico).
+-->
+<clickhouse>
+    <asynchronous_metric_log remove="1"/>
+    <metric_log remove="1"/>
+    <trace_log remove="1"/>
+    <text_log remove="1"/>
+    <part_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <query_views_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <session_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <zookeeper_log remove="1"/>
+    <blob_storage_log remove="1"/>
+    <backup_log remove="1"/>
+    <filesystem_cache_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+
+    <asynchronous_metrics_update_period_s>60</asynchronous_metrics_update_period_s>
+
+    <mark_cache_size>268435456</mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+</clickhouse>

@@ -54,6 +54,68 @@ def _cmd_clear(_args: argparse.Namespace) -> int:
     return 0
 
 
+# --- dashboard user accounts (local root recovery) -------------------------
+def _cmd_user_list(_args: argparse.Namespace) -> int:
+    from .services import users
+    users.init_db()
+    rows = users.list_users()
+    if not rows:
+        print("(nenhum usuário cadastrado — use 'create-admin' ou a tela de configuração inicial)")
+        return 0
+    print(f"{'USUÁRIO':<24} {'PERFIL':<10} {'ATIVO':<6} ÚLTIMO LOGIN")
+    for u in rows:
+        last = "-" if not u["last_login"] else \
+            __import__("datetime").datetime.fromtimestamp(u["last_login"]).isoformat(timespec="seconds")
+        print(f"{u['username']:<24} {u['role']:<10} {'sim' if u['active'] else 'não':<6} {last}")
+    return 0
+
+
+def _prompt_password(args: argparse.Namespace) -> str | None:
+    new = args.password
+    if not new:
+        new = getpass.getpass("Senha: ")
+        confirm = getpass.getpass("Confirme a senha: ")
+        if new != confirm:
+            print("ERRO: as senhas não conferem.", file=sys.stderr)
+            return None
+    return new
+
+
+def _cmd_create_admin(args: argparse.Namespace) -> int:
+    from .services import users
+    users.init_db()
+    pw = _prompt_password(args)
+    if pw is None:
+        return 1
+    try:
+        u = users.create_user(args.username, pw, role="admin")
+    except ValueError as e:
+        print(f"ERRO: {e}", file=sys.stderr)
+        return 1
+    print(f"OK: administrador '{u['username']}' criado.")
+    return 0
+
+
+def _cmd_reset_user(args: argparse.Namespace) -> int:
+    from .services import users
+    users.init_db()
+    target = next((u for u in users.list_users()
+                   if u["username"].lower() == args.username.lower()), None)
+    if not target:
+        print(f"ERRO: usuário '{args.username}' não encontrado.", file=sys.stderr)
+        return 1
+    pw = _prompt_password(args)
+    if pw is None:
+        return 1
+    try:
+        users.update_user(target["id"], password=pw, active=True)
+    except ValueError as e:
+        print(f"ERRO: {e}", file=sys.stderr)
+        return 1
+    print(f"OK: senha de '{target['username']}' redefinida (conta ativada; sessões revogadas).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="app.admin",
@@ -72,6 +134,21 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("clear-master-password",
                    help="Remove a senha mestra para definir uma nova pela interface."
                    ).set_defaults(func=_cmd_clear)
+
+    sub.add_parser("list-users", help="Lista as contas do dashboard."
+                   ).set_defaults(func=_cmd_user_list)
+
+    p_admin = sub.add_parser(
+        "create-admin", help="Cria uma conta de administrador do dashboard.")
+    p_admin.add_argument("username", help="Nome do administrador.")
+    p_admin.add_argument("--password", help="Senha (se omitida, será solicitada).")
+    p_admin.set_defaults(func=_cmd_create_admin)
+
+    p_rpw = sub.add_parser(
+        "reset-password", help="Redefine a senha de uma conta e a reativa.")
+    p_rpw.add_argument("username", help="Conta alvo.")
+    p_rpw.add_argument("--password", help="Nova senha (se omitida, será solicitada).")
+    p_rpw.set_defaults(func=_cmd_reset_user)
 
     args = parser.parse_args(argv)
     return args.func(args)

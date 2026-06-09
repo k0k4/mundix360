@@ -14,10 +14,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .security import require_auth
+from .security import protect
 from .routers import (
     ai,
     alerts,
+    auth,
     backup,
     content,
     firewall,
@@ -31,6 +32,7 @@ from .routers import (
     waf,
 )
 from .services.ai import memory as ai_memory
+from .services import users as auth_users
 
 app = FastAPI(
     title="Mundix Security 360 — Dashboard API",
@@ -42,6 +44,8 @@ app = FastAPI(
 @app.on_event("startup")
 def _startup() -> None:
     ai_memory.init_db()
+    auth_users.init_db()
+    auth_users.purge_expired()
     from .services import contentcat
     contentcat.start_scheduler()
     from .services import threatintel as _ti
@@ -78,7 +82,11 @@ def health():
     return {"status": "ok", "service": "mundix360-dashboard-api"}
 
 
-_protected = [Depends(require_auth)]
+# Authentication endpoints are intentionally NOT behind `protect` (login/setup
+# must be reachable anonymously); they enforce their own per-route guards.
+app.include_router(auth.router)
+
+_protected = [Depends(protect)]
 for r in (overview, alerts, firewall, network, content, flows, logs, system, ai, threatintel, waf, backup, multiwan):
     app.include_router(r.router, dependencies=_protected)
 

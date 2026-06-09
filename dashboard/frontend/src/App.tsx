@@ -1,4 +1,5 @@
 import { Refine } from "@refinedev/core";
+import { Authenticated } from "@refinedev/core";
 import {
   ThemedLayoutV2,
   ThemedSiderV2,
@@ -8,6 +9,7 @@ import {
 } from "@refinedev/antd";
 import routerProvider, {
   NavigateToResource,
+  CatchAllNavigate,
   UnsavedChangesNotifier,
   DocumentTitleHandler,
 } from "@refinedev/react-router-v6";
@@ -33,10 +35,12 @@ import {
   TagsOutlined,
   SaveOutlined,
   ApartmentOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
 import "@refinedev/antd/dist/reset.css";
 
 import { dataProvider } from "./dataProvider";
+import { authProvider } from "./authProvider";
 import { Brand } from "./components/Brand";
 import { Header } from "./components/Header";
 import { Overview } from "./pages/overview";
@@ -64,6 +68,8 @@ import { FlowsPage } from "./pages/flows";
 import { LogsPage } from "./pages/logs";
 import { ServicesPage } from "./pages/system/services";
 import { AiConfigPage } from "./pages/ai-config";
+import { LoginPage, SetupPage } from "./pages/login";
+import { UsersPage } from "./pages/users";
 import { AssistantDock } from "./components/AssistantDock";
 import { SiderResizer } from "./components/SiderResizer";
 import { RevertBanner } from "./components/RevertBanner";
@@ -110,6 +116,7 @@ export default function App() {
       >
         <Refine
           dataProvider={dataProvider}
+          authProvider={authProvider}
           routerProvider={routerProvider}
           notificationProvider={useNotificationProvider}
           options={{
@@ -319,21 +326,31 @@ export default function App() {
               list: "/system/backup",
               meta: { label: "Backup & Restauração", icon: <SaveOutlined /> },
             },
+            {
+              name: "users",
+              list: "/system/users",
+              meta: { label: "Usuários & Acesso", icon: <UserOutlined /> },
+            },
           ]}
         >
           <Routes>
             <Route
               element={
-                <ThemedLayoutV2
-                  Title={Title}
-                  Header={Header}
-                  Sider={(props) => <ThemedSiderV2 {...props} fixed />}
+                <Authenticated
+                  key="authenticated-layout"
+                  fallback={<CatchAllNavigate to="/login" />}
                 >
-                  <Outlet />
-                  <SiderResizer />
-                  <AssistantDock />
-                  <RevertBanner />
-                </ThemedLayoutV2>
+                  <ThemedLayoutV2
+                    Title={Title}
+                    Header={Header}
+                    Sider={(props) => <ThemedSiderV2 {...props} fixed />}
+                  >
+                    <Outlet />
+                    <SiderResizer />
+                    <AssistantDock />
+                    <RevertBanner />
+                  </ThemedLayoutV2>
+                </Authenticated>
               }
             >
               <Route index element={<Overview />} />
@@ -384,8 +401,20 @@ export default function App() {
               <Route path="/logs" element={<LogsPage />} />
               <Route path="/system" element={<ServicesPage />} />
               <Route path="/system/backup" element={<BackupPage />} />
+              <Route path="/system/users" element={<UsersPage />} />
 
               <Route path="*" element={<ErrorComponent />} />
+            </Route>
+
+            <Route
+              element={
+                <Authenticated key="auth-pages" fallback={<Outlet />}>
+                  <NavigateToResource resource="overview" />
+                </Authenticated>
+              }
+            >
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/setup" element={<SetupPage />} />
             </Route>
           </Routes>
 

@@ -1,0 +1,17 @@
+[Unit]
+Description=Mundix Security 360 — Ingestão SIEM (Suricata eve.json -> ClickHouse)
+Documentation=https://github.com/k0k4/mundix360
+After=network-online.target clickhouse-server.service suricata.service
+Wants=clickhouse-server.service
+Requires=suricata.service
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/opt/mundix360/dashboard/backend/.env
+ExecStart=/opt/venv/bin/python /opt/mundix360/scripts/security/siem-ingest.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

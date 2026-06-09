@@ -1,48 +1,8 @@
 # Mundix Security 360 — Instalador do Appliance
 
-Há **dois caminhos** de instalação. Escolha conforme o cenário:
-
-## ⭐ Caminho A — Instalação online (recomendado, mais robusto)
-
-Você instala o **Ubuntu Server 24.04** no minipc (com internet) e roda **um único
-comando**. É o caminho mais confiável: nada de ISO/bundle, tudo é baixado e
-verificado na hora, e o painel é publicado em **todas as interfaces** (não depende
-de adivinhar qual NIC é a LAN).
-
-```bash
-# 1) Instale o Ubuntu Server 24.04 e conecte à internet.
-# 2) Copie/clone o repositório para a máquina, ex.:
-git clone <repo> /opt/mundix360            # ou scp do diretório
-cd /opt/mundix360
-# 3) Rode o instalador:
-sudo ./installer/mundix-install.sh         # interativo (pede a senha mestra)
-# ou não-interativo:
-sudo ./installer/mundix-install.sh --yes --openrouter-key sk-or-...
-```
-
-Ao final ele imprime as **portas realmente abertas** e a **URL do painel**. Acesse
-`https://<IP-da-caixa>` (HTTP também funciona). Usuário `admin` + a senha mestra.
-
-O instalador é **idempotente** (pode rodar de novo sem medo) e **auto-verificável**:
-sobe cada serviço, confirma que ficou ativo, e se algo crítico falhar mostra o
-diagnóstico e sai com erro. Log completo em `/var/log/mundix-install.log`.
-
-Opções: `--yes`, `--master-password VALOR`, `--openrouter-key VALOR`,
-`--regen-identity` (regenera chaves SSH/machine-id), `--skip-frontend`.
-
-> **Por que o caminho offline/ISO falhava antes:** o `nftables-base` era hardcoded
-> (`define WAN1 = ens18`…) e o firewall `policy drop` **não liberava as portas
-> 80/443 do painel** — só SSH e DNS. Resultado: "nenhuma porta aberta". Isso foi
-> corrigido: a base agora é **adaptativa** (sem NIC fixa) e libera 22/80/443
-> sempre (anti-lockout), e o render em runtime (`fwmanage`) também mantém 80/443.
-
----
-
-## Caminho B — Bundle offline + ISO autoinstalável (avançado)
-
-Implantação **reproduzível** sem depender da internet do cliente, no estilo
-pfSense/OPNsense: você gera um **bundle offline**, grava num pendrive, e instala.
-Veja `build-bundle.sh` / `build-iso.sh` abaixo.
+Implantação **profissional e reproduzível** do Mundix em hardware físico
+(minipc, 1U, etc.), no estilo pfSense/OPNsense: você gera um **bundle offline**,
+grava num pendrive, e instala sem depender da internet do cliente.
 
 ## Por que não clonar o disco?
 

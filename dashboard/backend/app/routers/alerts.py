@@ -56,20 +56,23 @@ def list_alerts(
     params["limit"] = limit
     params["offset"] = offset
 
-    rows = clickhouse.query(
-        f"""SELECT toString(event_id) AS event_id, timestamp, source, source_type,
-                   rule_name, severity, category, mitre_tactic, mitre_technique,
-                   src_ip, dst_ip, src_port, dst_port, protocol, hostname, user,
-                   description, action_taken, false_positive, triage_notes, tags
-            FROM siem_alerts
-            WHERE {where_clause}
-            ORDER BY {sort} DESC
-            LIMIT {{limit:UInt32}} OFFSET {{offset:UInt32}}""",
-        params,
-    )
-    total_rows = clickhouse.query(
-        f"SELECT count() AS c FROM siem_alerts WHERE {where_clause}", params
-    )
+    try:
+        rows = clickhouse.query(
+            f"""SELECT toString(event_id) AS event_id, timestamp, source, source_type,
+                       rule_name, severity, category, mitre_tactic, mitre_technique,
+                       src_ip, dst_ip, src_port, dst_port, protocol, hostname, user,
+                       description, action_taken, false_positive, triage_notes, tags
+                FROM siem_alerts
+                WHERE {where_clause}
+                ORDER BY {sort} DESC
+                LIMIT {{limit:UInt32}} OFFSET {{offset:UInt32}}""",
+            params,
+        )
+        total_rows = clickhouse.query(
+            f"SELECT count() AS c FROM siem_alerts WHERE {where_clause}", params
+        )
+    except Exception:
+        return {"total": 0, "count": 0, "alerts": [], "available": False}
     total = int(total_rows[0]["c"]) if total_rows else 0
     return {"total": total, "count": len(rows), "alerts": rows}
 
@@ -77,26 +80,32 @@ def list_alerts(
 @router.get("/stats")
 def alert_stats(hours: int = Query(24, ge=1, le=720)):
     params = {"hours": hours}
-    by_severity = clickhouse.query(
-        "SELECT severity, count() AS count FROM siem_alerts "
-        "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR "
-        "GROUP BY severity ORDER BY severity DESC", params,
-    )
-    by_category = clickhouse.query(
-        "SELECT category, count() AS count FROM siem_alerts "
-        "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR "
-        "GROUP BY category ORDER BY count DESC LIMIT 10", params,
-    )
-    by_source = clickhouse.query(
-        "SELECT source, count() AS count FROM siem_alerts "
-        "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR "
-        "GROUP BY source ORDER BY count DESC LIMIT 10", params,
-    )
-    timeline = clickhouse.query(
-        "SELECT toStartOfHour(timestamp) AS hour, count() AS count FROM siem_alerts "
-        "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR "
-        "GROUP BY hour ORDER BY hour", params,
-    )
+    try:
+        by_severity = clickhouse.query(
+            "SELECT severity, count() AS count FROM siem_alerts "
+            "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR "
+            "GROUP BY severity ORDER BY severity DESC", params,
+        )
+        by_category = clickhouse.query(
+            "SELECT category, count() AS count FROM siem_alerts "
+            "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR "
+            "GROUP BY category ORDER BY count DESC LIMIT 10", params,
+        )
+        by_source = clickhouse.query(
+            "SELECT source, count() AS count FROM siem_alerts "
+            "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR "
+            "GROUP BY source ORDER BY count DESC LIMIT 10", params,
+        )
+        timeline = clickhouse.query(
+            "SELECT toStartOfHour(timestamp) AS hour, count() AS count FROM siem_alerts "
+            "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR "
+            "GROUP BY hour ORDER BY hour", params,
+        )
+    except Exception:
+        return {
+            "by_severity": [], "by_category": [], "by_source": [],
+            "timeline": [], "available": False,
+        }
     return {
         "by_severity": by_severity,
         "by_category": by_category,
@@ -108,11 +117,14 @@ def alert_stats(hours: int = Query(24, ge=1, le=720)):
 @router.get("/top-talkers")
 def top_talkers(hours: int = Query(24, ge=1, le=720), limit: int = Query(10, ge=1, le=50)):
     params = {"hours": hours, "limit": limit}
-    src = clickhouse.query(
-        "SELECT src_ip, count() AS count FROM siem_alerts "
-        "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR AND src_ip != '' "
-        "GROUP BY src_ip ORDER BY count DESC LIMIT {limit:UInt32}", params,
-    )
+    try:
+        src = clickhouse.query(
+            "SELECT src_ip, count() AS count FROM siem_alerts "
+            "WHERE timestamp > now() - INTERVAL {hours:UInt32} HOUR AND src_ip != '' "
+            "GROUP BY src_ip ORDER BY count DESC LIMIT {limit:UInt32}", params,
+        )
+    except Exception:
+        return {"top_src_ips": [], "available": False}
     return {"top_src_ips": src}
 
 

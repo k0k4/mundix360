@@ -21,10 +21,8 @@ INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${INSTALLER_DIR}/lib/common.sh"
 source "${INSTALLER_DIR}/manifest.env"
 
-UBUNTU_RELEASE="24.04"
-# Resolve a última versão de ponto disponível (evita 404 quando o Ubuntu sobe
-# um novo point-release). Pode ser sobrescrito com --ubuntu <iso-local>.
-UBUNTU_ISO_URL=""
+UBUNTU_VERSION="24.04.2"
+UBUNTU_ISO_URL="https://releases.ubuntu.com/24.04/ubuntu-${UBUNTU_VERSION}-live-server-amd64.iso"
 UBUNTU_ISO=""
 BUNDLE=""
 OUT="${INSTALLER_DIR}/dist"
@@ -50,12 +48,7 @@ mkdir -p "${SEED}" "${EMBED}" "${BOOT}/boot/grub"
 # ---------------------------------------------------------------- 1) Ubuntu ISO
 step "1/6 — ISO base do Ubuntu"
 if [[ -z "${UBUNTU_ISO}" ]]; then
-  # Descobre o ISO de servidor mais recente do release (ex.: 24.04.4).
-  local_name="$(curl -fsSL "https://releases.ubuntu.com/${UBUNTU_RELEASE}/" 2>/dev/null \
-    | grep -oE "ubuntu-${UBUNTU_RELEASE}(\.[0-9]+)?-live-server-amd64\.iso" | sort -V | tail -1)"
-  [[ -n "${local_name}" ]] || die "não consegui descobrir o ISO do Ubuntu ${UBUNTU_RELEASE} (sem internet?). Passe --ubuntu <iso>."
-  UBUNTU_ISO_URL="https://releases.ubuntu.com/${UBUNTU_RELEASE}/${local_name}"
-  UBUNTU_ISO="${OUT}/${local_name}"
+  UBUNTU_ISO="${OUT}/ubuntu-${UBUNTU_VERSION}-live-server-amd64.iso"
   if [[ ! -f "${UBUNTU_ISO}" ]]; then
     log "baixando ${UBUNTU_ISO_URL}"
     curl -fL --progress-bar -o "${UBUNTU_ISO}" "${UBUNTU_ISO_URL}" \

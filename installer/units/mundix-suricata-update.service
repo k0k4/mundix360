@@ -1,0 +1,12 @@
+[Unit]
+Description=Mundix Security 360 — Atualização de regras Suricata (ET Open)
+Documentation=https://github.com/k0k4/mundix360
+After=network-online.target suricata.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+# Baixa/recompila o ruleset ET Open e recarrega a engine sem reiniciar o serviço.
+ExecStart=/usr/bin/suricata-update --suricata-version 7.0.3 --no-test
+ExecStartPost=/usr/bin/suricatasc -c reload-rules

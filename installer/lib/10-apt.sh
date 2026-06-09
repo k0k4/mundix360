@@ -3,29 +3,15 @@
 
 _setup_thirdparty_repos() {
   # Apenas no modo online: registra repositórios de terceiros (ex.: ClickHouse).
-  # Campos separados por '|' (URLs contêm ':'):
-  #   nome|linha-deb|url-da-chave-armored|fingerprint-keyserver(opcional)
-  local entry name line key keyid keyring
+  # Campos separados por '|' (URLs contêm ':').
+  local entry name line key
   for entry in "${APT_THIRDPARTY_REPOS[@]}"; do
-    IFS='|' read -r name line key keyid <<<"$entry"
-    keyring="/usr/share/keyrings/mundix-${name}.gpg"
-    if [[ ! -s "$keyring" ]]; then
+    IFS='|' read -r name line key <<<"$entry"
+    if [[ ! -f "/etc/apt/sources.list.d/mundix-${name}.list" ]]; then
       log "registrando repositório ${name}"
-      run rm -f "$keyring"
-      if ! run bash -c "curl -fsSL '${key}' | gpg --dearmor -o '${keyring}'" || [[ ! -s "$keyring" ]]; then
-        run rm -f "$keyring"
-        if [[ -n "${keyid:-}" ]]; then
-          warn "chave de ${name} via URL indisponível; tentando keyserver…"
-          run gpg --no-default-keyring --keyring "$keyring" \
-              --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys "$keyid" \
-            && run chmod 0644 "$keyring" \
-            || warn "falha ao buscar chave de ${name} (keyserver)"
-        else
-          warn "falha ao buscar chave de ${name}"
-        fi
-      fi
+      run bash -c "curl -fsSL '${key}' | gpg --dearmor -o /usr/share/keyrings/mundix-${name}.gpg"
+      run bash -c "echo 'deb [signed-by=/usr/share/keyrings/mundix-${name}.gpg] ${line}' > /etc/apt/sources.list.d/mundix-${name}.list"
     fi
-    run bash -c "echo 'deb [signed-by=${keyring}] ${line}' > /etc/apt/sources.list.d/mundix-${name}.list"
   done
 }
 

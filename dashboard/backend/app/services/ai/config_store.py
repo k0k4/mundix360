@@ -63,17 +63,37 @@ _PBKDF2_ITERS = 200_000
 
 _lock = threading.Lock()
 _cache: dict[str, str] | None = None
+_cache_sig: tuple[float, int] | None = None
+
+
+def _db_signature() -> tuple[float, int]:
+    """Cheap fingerprint of the ai.db (and its WAL) so that writes performed by
+    a separate process — e.g. the ``app.admin`` recovery CLI run while the API
+    is live — are detected and the in-memory cache reloaded. Uses the newest
+    mtime/size across the main db and its ``-wal`` sidecar."""
+    sig_mtime = 0.0
+    sig_size = 0
+    for suffix in ("", "-wal"):
+        try:
+            st = os.stat(f"{settings.ai_db_path}{suffix}")
+        except OSError:
+            continue
+        sig_mtime = max(sig_mtime, st.st_mtime)
+        sig_size += st.st_size
+    return (sig_mtime, sig_size)
 
 
 # --- low-level cache -------------------------------------------------------
 def _load() -> dict[str, str]:
-    global _cache
+    global _cache, _cache_sig
     with _lock:
-        if _cache is None:
+        sig = _db_signature()
+        if _cache is None or sig != _cache_sig:
             try:
                 with memory._conn() as con:
                     rows = con.execute("SELECT key, value FROM ai_config").fetchall()
                 _cache = {r["key"]: r["value"] for r in rows}
+                _cache_sig = _db_signature()
             except Exception:
                 # Fail open with no overrides rather than break the agent/redaction.
                 return {}
@@ -81,9 +101,10 @@ def _load() -> dict[str, str]:
 
 
 def invalidate() -> None:
-    global _cache
+    global _cache, _cache_sig
     with _lock:
         _cache = None
+        _cache_sig = None
 
 
 def _write(key: str, value: str | None) -> None:

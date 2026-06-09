@@ -41,6 +41,17 @@ phase_config() {
     done
   fi
 
+  # ClickHouse: perfil de baixo consumo (desativa logs de auto-instrumentação
+  # de alto churn — crítico no Atom de 2 núcleos). O dir config.d pertence ao
+  # usuário clickhouse, então ajustamos o dono após semear.
+  if [[ -f "${cfg}/clickhouse/mundix-lowpower.xml" && -d /etc/clickhouse-server/config.d ]]; then
+    if [[ ! -e /etc/clickhouse-server/config.d/mundix-lowpower.xml ]]; then
+      _seed_file "${cfg}/clickhouse/mundix-lowpower.xml" \
+        /etc/clickhouse-server/config.d/mundix-lowpower.xml 0640
+      run chown clickhouse:clickhouse /etc/clickhouse-server/config.d/mundix-lowpower.xml
+    fi
+  fi
+
   # Seeds declarados no manifesto (ex.: openrouter.env a partir do exemplo).
   local pair src dst
   for pair in "${MUNDIX_CONFIG_SEED[@]}"; do

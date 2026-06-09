@@ -42,3 +42,9 @@ nftables.conf.backup.*
 # Sistema
 .DS_Store
 *.swp
+
+# Backups de ambiente (segredos) e artefatos de sessão do Copilot
+env_bkp
+*.env.bkp
+*.env.backup
+copilot-session-*.md

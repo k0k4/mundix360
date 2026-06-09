@@ -144,8 +144,9 @@ def update_alert(event_id, triage_obj):
 
 def main():
     if not OPENROUTER_API_KEY:
-        log("ERROR: OPENROUTER_API_KEY not set. Set env var or configure /opt/mundix360/configs/openrouter.env")
-        sys.exit(1)
+        log("SKIP: OPENROUTER_API_KEY not configured; SIEM AI triage disabled. "
+            "Set it in /opt/mundix360/configs/openrouter.env to enable.")
+        sys.exit(0)
 
     alerts = fetch_alerts(HOURS_BACK)
     if not alerts:

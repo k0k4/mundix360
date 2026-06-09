@@ -12,8 +12,17 @@ class Settings(BaseSettings):
     # API
     api_host: str = "127.0.0.1"
     api_port: int = 8099
-    api_token: str = ""  # if set, required as Bearer token
+    api_token: str = ""  # if set, accepted as a Bearer token (machine/back-compat)
     cors_origins: str = "http://127.0.0.1:3001,http://localhost:3001"
+
+    # Dashboard user authentication (local accounts + opaque cookie sessions)
+    auth_db_path: str = "/opt/mundix360/dashboard/backend/data/auth.db"
+    session_ttl_hours: int = 12
+    session_cookie: str = "mundix_session"
+    # Set true only when the panel is served exclusively over HTTPS; on a LAN
+    # appliance reachable over plain HTTP this must stay false or the cookie is
+    # never sent back and login silently fails.
+    cookie_secure: bool = False
 
     # ClickHouse
     clickhouse_host: str = "127.0.0.1"

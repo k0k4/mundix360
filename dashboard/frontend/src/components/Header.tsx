@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
-import { useCustom } from "@refinedev/core";
-import { Button, Tooltip } from "antd";
-import { AlignLeftOutlined, AlignRightOutlined } from "@ant-design/icons";
+import { useCustom, useGetIdentity, useLogout } from "@refinedev/core";
+import { Button, Tooltip, Dropdown, Avatar, Tag, Modal, Form, Input, message } from "antd";
+import {
+  AlignLeftOutlined,
+  AlignRightOutlined,
+  UserOutlined,
+  LogoutOutlined,
+  KeyOutlined,
+  DownOutlined,
+} from "@ant-design/icons";
+import { api } from "../api";
+import type { Identity } from "../authProvider";
 
 function Clock() {
   const [now, setNow] = useState(() => new Date());
@@ -13,6 +22,124 @@ function Clock() {
     <span className="mx-mono" style={{ color: "var(--mx-text-dim)" }}>
       {now.toLocaleTimeString("pt-BR")}
     </span>
+  );
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  admin: "Administrador",
+  operator: "Operador",
+  viewer: "Somente leitura",
+};
+
+function UserMenu() {
+  const { data: identity } = useGetIdentity<Identity>();
+  const { mutate: logout } = useLogout();
+  const [pwOpen, setPwOpen] = useState(false);
+  const [form] = Form.useForm();
+
+  if (!identity) return null;
+
+  const changePassword = async (values: any) => {
+    try {
+      await api.post("/api/auth/change-password", {
+        current_password: values.current_password,
+        new_password: values.new_password,
+      });
+      message.success("Senha alterada");
+      setPwOpen(false);
+      form.resetFields();
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || "Falha ao alterar a senha");
+    }
+  };
+
+  const items = [
+    {
+      key: "who",
+      disabled: true,
+      label: (
+        <div style={{ padding: "2px 0" }}>
+          <div style={{ fontWeight: 600 }}>{identity.username}</div>
+          <Tag style={{ marginTop: 4 }}>
+            {ROLE_LABEL[identity.role] || identity.role}
+          </Tag>
+        </div>
+      ),
+    },
+    { type: "divider" as const },
+    {
+      key: "password",
+      icon: <KeyOutlined />,
+      label: "Alterar senha",
+      onClick: () => setPwOpen(true),
+    },
+    {
+      key: "logout",
+      icon: <LogoutOutlined />,
+      danger: true,
+      label: "Sair",
+      onClick: () => logout(),
+    },
+  ];
+
+  return (
+    <>
+      <Dropdown menu={{ items }} trigger={["click"]} placement="bottomRight">
+        <Button type="text" style={{ color: "var(--mx-text)" }}>
+          <Avatar size={22} icon={<UserOutlined />} style={{ marginRight: 6 }} />
+          {identity.username}
+          <DownOutlined style={{ fontSize: 10, marginLeft: 6 }} />
+        </Button>
+      </Dropdown>
+      <Modal
+        open={pwOpen}
+        title="Alterar minha senha"
+        okText="Salvar"
+        cancelText="Cancelar"
+        onCancel={() => setPwOpen(false)}
+        onOk={() => form.submit()}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" onFinish={changePassword}>
+          <Form.Item
+            name="current_password"
+            label="Senha atual"
+            rules={[{ required: true, message: "Informe a senha atual" }]}
+          >
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          <Form.Item
+            name="new_password"
+            label="Nova senha"
+            rules={[
+              { required: true, message: "Informe a nova senha" },
+              { min: 8, message: "Mínimo de 8 caracteres" },
+            ]}
+            hasFeedback
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item
+            name="confirm"
+            label="Confirmar nova senha"
+            dependencies={["new_password"]}
+            rules={[
+              { required: true, message: "Confirme a nova senha" },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue("new_password") === value)
+                    return Promise.resolve();
+                  return Promise.reject(new Error("As senhas não conferem"));
+                },
+              }),
+            ]}
+            hasFeedback
+          >
+            <Input.Password autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </>
   );
 }
 
@@ -64,6 +191,7 @@ export function Header({ onToggleSider }: { onToggleSider?: () => void }) {
       <span className="mx-pill">
         <Clock />
       </span>
+      <UserMenu />
     </header>
   );
 }
