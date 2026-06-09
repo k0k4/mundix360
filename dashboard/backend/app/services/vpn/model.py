@@ -7,11 +7,9 @@ source of truth for every VPN role the appliance plays:
 
   * ``wireguard`` — the appliance as a WireGuard **server/concentrator**
     (road-warrior peers and site-to-site peers).
-  * (future) ``openvpn``  — OpenVPN server.
-  * (future) ``fortinet`` — openfortivpn **client** dialling a remote FortiGate.
-
-Only the ``wireguard`` section is implemented in this phase; the others are
-reserved so the on-disk schema stays stable across phases.
+  * ``openvpn``  — OpenVPN **server** (remote-access + site-to-site).
+  * ``fortinet`` — openfortivpn **client** dialling a remote FortiGate SSL-VPN
+    (the appliance is the client; LAN reaches the remote subnets through it).
 """
 from __future__ import annotations
 
@@ -28,6 +26,12 @@ MODEL_PATH = "/etc/mundix/vpn.json"
 _WG_IFACE_RE = re.compile(r"^wg[0-9]{1,3}$")
 # OpenVPN tun device names (tun0, tun1, ...).
 _TUN_IFACE_RE = re.compile(r"^tun[0-9]{1,3}$")
+# pppd interface name pinned for the Fortinet client tunnel (e.g. ppp-forti).
+_PPP_IFACE_RE = re.compile(r"^[A-Za-z0-9_-]{1,15}$")
+# A sha256 certificate digest (hex), used to pin the FortiGate certificate.
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+# A gateway host: IPv4/IPv6 literal or DNS hostname.
+_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]{1,253}$")
 # Opaque base64 WireGuard keys are exactly 44 chars ending in '='.
 _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{43}=$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9 ._-]{1,40}$")
@@ -51,7 +55,45 @@ def _default_wireguard() -> dict[str, Any]:
 
 
 def _default_model() -> dict[str, Any]:
-    return {"wireguard": _default_wireguard(), "openvpn": _default_openvpn()}
+    return {
+        "wireguard": _default_wireguard(),
+        "openvpn": _default_openvpn(),
+        "fortinet": _default_fortinet(),
+    }
+
+
+def _default_fortinet() -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "gateway_host": "",
+        "gateway_port": 443,
+        "username": "",
+        "password": "",              # secret
+        "realm": "",
+        "trusted_cert": "",          # sha256 hex digest — pins the FortiGate cert (TOFU)
+        "iface": "ppp-forti",        # pinned pppd interface name (deterministic firewall)
+        "remote_subnets": [],        # subnets reachable through the tunnel (LAN routing/NAT)
+        "set_dns": False,            # don't let the remote clobber appliance DNS by default
+        "persistent": True,          # auto-reconnect loop
+    }
+
+
+def _norm_fortinet(f: dict[str, Any]) -> dict[str, Any]:
+    base = _default_fortinet()
+    base.update({k: f[k] for k in base if k in f and k != "remote_subnets"})
+    base["enabled"] = bool(f.get("enabled", False))
+    base["gateway_host"] = (f.get("gateway_host") or "").strip()
+    base["gateway_port"] = int(f.get("gateway_port") or 443)
+    base["username"] = (f.get("username") or "").strip()
+    base["password"] = f.get("password") or ""
+    base["realm"] = (f.get("realm") or "").strip()
+    base["trusted_cert"] = (f.get("trusted_cert") or "").strip().lower().replace(":", "")
+    base["iface"] = (f.get("iface") or "ppp-forti").strip()
+    base["set_dns"] = bool(f.get("set_dns", False))
+    base["persistent"] = bool(f.get("persistent", True))
+    base["remote_subnets"] = [
+        s.strip() for s in (f.get("remote_subnets") or []) if s and s.strip()]
+    return base
 
 
 def _default_openvpn() -> dict[str, Any]:
@@ -134,6 +176,7 @@ def load_model() -> dict[str, Any]:
     return {
         "wireguard": _norm_wireguard(m.get("wireguard", {})),
         "openvpn": _norm_openvpn(m.get("openvpn", {})),
+        "fortinet": _norm_fortinet(m.get("fortinet", {})),
     }
 
 
@@ -157,6 +200,13 @@ def v_iface(name: str) -> str:
 def v_tun(name: str) -> str:
     if not _TUN_IFACE_RE.match(name or ""):
         raise ValueError(f"dispositivo tun inválido (use tun0..tun999): {name!r}")
+    return name
+
+
+def v_ppp_iface(name: str) -> str:
+    if not _PPP_IFACE_RE.match(name or ""):
+        raise ValueError(
+            f"nome de interface inválido (até 15 caracteres alfanuméricos): {name!r}")
     return name
 
 
@@ -252,3 +302,22 @@ def validate_openvpn(o: dict[str, Any]) -> None:
             _v_cidr(s, f"sub-rede do site '{c['name']}'")
         if c["type"] == "site" and not c["site_subnets"]:
             raise ValueError(f"cliente site '{c['name']}' exige ao menos uma sub-rede remota")
+
+
+def validate_fortinet(f: dict[str, Any]) -> None:
+    v_ppp_iface(f["iface"])
+    if not (1 <= int(f["gateway_port"]) <= 65535):
+        raise ValueError("porta do gateway deve estar entre 1 e 65535")
+    if f["gateway_host"] and not _HOST_RE.match(f["gateway_host"]):
+        raise ValueError(f"host do gateway inválido: {f['gateway_host']!r}")
+    if f["trusted_cert"] and not _SHA256_HEX_RE.match(f["trusted_cert"]):
+        raise ValueError("impressão digital do certificado inválida (esperado sha256 hex)")
+    for s in f["remote_subnets"]:
+        _v_cidr(s, "sub-rede remota")
+    if f["enabled"]:
+        if not f["gateway_host"]:
+            raise ValueError("informe o host do gateway FortiGate")
+        if not f["username"]:
+            raise ValueError("informe o usuário da VPN")
+        if not f["password"]:
+            raise ValueError("informe a senha da VPN")

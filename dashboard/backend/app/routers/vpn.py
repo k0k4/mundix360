@@ -117,3 +117,32 @@ def delete_client(client_id: str) -> dict[str, Any]:
 @router.get("/openvpn/clients/{client_id}/config", response_class=PlainTextResponse)
 def openvpn_client_config(client_id: str) -> str:
     return _guard(vpn.openvpn_client_config, client_id)
+
+
+class FortinetClientModel(BaseModel):
+    enabled: bool = False
+    gateway_host: str = ""
+    gateway_port: int = Field(443, ge=1, le=65535)
+    username: str = ""
+    password: Optional[str] = None
+    realm: str = ""
+    trusted_cert: str = ""
+    iface: str = "ppp-forti"
+    remote_subnets: list[str] = Field(default_factory=list)
+    set_dns: bool = False
+    persistent: bool = True
+
+
+class FortinetProbeModel(BaseModel):
+    host: Optional[str] = None
+    port: Optional[int] = Field(None, ge=1, le=65535)
+
+
+@router.put("/fortinet")
+def set_fortinet(cfg: FortinetClientModel) -> dict[str, Any]:
+    return _guard(vpn.set_fortinet, cfg.model_dump(exclude_none=True))
+
+
+@router.post("/fortinet/probe-cert")
+def fortinet_probe_cert(req: FortinetProbeModel) -> dict[str, Any]:
+    return _guard(vpn.fortinet_probe_cert, req.host, req.port)

@@ -31,6 +31,8 @@ ALLOWED_BINARIES = {
     "qrencode",
     "openvpn",
     "/usr/share/easy-rsa/easyrsa",
+    "openfortivpn",
+    "/usr/bin/openfortivpn",
     "/opt/mundix360/scripts/active-response/block-ip.sh",
     "/usr/sbin/nft",
     "/bin/systemctl",

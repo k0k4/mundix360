@@ -14,20 +14,24 @@ from typing import Any
 from . import model as _m
 from . import wireguard as _wg
 from . import openvpn as _ov
+from . import fortinet as _ft
 
 
 # Aggregated nft fragment helpers consumed by fwmanage.render() — every enabled
-# VPN role contributes its firewall openings (WireGuard + OpenVPN).
+# VPN role contributes its firewall openings (WireGuard + OpenVPN + Fortinet).
 def nft_input_accepts(wan: str | None = None) -> list[str]:
-    return _wg.nft_input_accepts(wan) + _ov.nft_input_accepts(wan)
+    return (_wg.nft_input_accepts(wan) + _ov.nft_input_accepts(wan)
+            + _ft.nft_input_accepts(wan))
 
 
 def nft_forward_accepts(wan: str | None = None) -> list[str]:
-    return _wg.nft_forward_accepts(wan) + _ov.nft_forward_accepts(wan)
+    return (_wg.nft_forward_accepts(wan) + _ov.nft_forward_accepts(wan)
+            + _ft.nft_forward_accepts(wan))
 
 
 def nft_postrouting_masq(wan: str | None = None) -> list[str]:
-    return _wg.nft_postrouting_masq(wan) + _ov.nft_postrouting_masq(wan)
+    return (_wg.nft_postrouting_masq(wan) + _ov.nft_postrouting_masq(wan)
+            + _ft.nft_postrouting_masq(wan))
 
 
 _lock = threading.RLock()
@@ -39,7 +43,7 @@ _SERVER_FIELDS = (
 # ---------------------------------------------------------------- status ------
 
 def get_status() -> dict[str, Any]:
-    return {"wireguard": _wg.status(), "openvpn": _ov.status()}
+    return {"wireguard": _wg.status(), "openvpn": _ov.status(), "fortinet": _ft.status()}
 
 
 # ------------------------------------------------------- server settings ------
@@ -237,3 +241,35 @@ def openvpn_client_config(client_id: str) -> str:
         raise ValueError("PKI ainda não inicializada — ative o OpenVPN primeiro")
     _ov.build_client(client["cn"])
     return _ov.client_ovpn(ov, client)
+
+
+# ---------------------------------------------------------- Fortinet client ---
+
+_FT_FIELDS = (
+    "enabled", "gateway_host", "gateway_port", "username", "password", "realm",
+    "trusted_cert", "iface", "remote_subnets", "set_dns", "persistent")
+
+
+def set_fortinet(data: dict[str, Any]) -> dict[str, Any]:
+    with _lock:
+        model = _m.load_model()
+        ft = model["fortinet"]
+        for k in _FT_FIELDS:
+            if k in data and data[k] is not None:
+                ft[k] = data[k]
+        # Preserve the stored password when the client doesn't resend it.
+        if not (data.get("password") or "").strip():
+            ft["password"] = model["fortinet"].get("password", "")
+        ft = _m._norm_fortinet(ft)
+        model["fortinet"] = ft
+        _m.validate_fortinet(ft)
+        _m.save_model(model)
+        _ft.apply_client(ft)
+        return _ft.status()
+
+
+def fortinet_probe_cert(host: str | None = None, port: int | None = None) -> dict[str, Any]:
+    ft = _m.load_model()["fortinet"]
+    h = (host or ft.get("gateway_host") or "").strip()
+    p = int(port or ft.get("gateway_port") or 443)
+    return _ft.probe_certificate(h, p)

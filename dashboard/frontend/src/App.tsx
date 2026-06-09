@@ -58,6 +58,7 @@ import { VlansPage } from "./pages/network/vlans";
 import { MultiWanPage } from "./pages/network/multiwan";
 import { WireGuardPage } from "./pages/vpn/wireguard";
 import { OpenVpnPage } from "./pages/vpn/openvpn";
+import { FortinetPage } from "./pages/vpn/fortinet";
 import { ReservationsPage } from "./pages/network/reservations";
 import { LeasesPage } from "./pages/network/leases";
 import { DnsPage } from "./pages/network/dns";
@@ -325,6 +326,15 @@ export default function App() {
               },
             },
             {
+              name: "fortinet",
+              list: "/vpn/fortinet",
+              meta: {
+                parent: "vpn-group",
+                label: "Fortinet",
+                icon: <ApiOutlined />,
+              },
+            },
+            {
               name: "domains",
               list: "/content",
               create: "/content/new",
@@ -418,6 +428,7 @@ export default function App() {
               <Route path="/vpn">
                 <Route path="wireguard" element={<WireGuardPage />} />
                 <Route path="openvpn" element={<OpenVpnPage />} />
+                <Route path="fortinet" element={<FortinetPage />} />
               </Route>
 
               <Route path="/content">
