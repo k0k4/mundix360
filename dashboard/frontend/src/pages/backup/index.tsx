@@ -165,24 +165,24 @@ export function BackupPage() {
         }
       />
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
-        <Col xs={24} sm={6}>
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        <Col xs={12} sm={6}>
           <KpiCard icon={<DatabaseOutlined />} color="#1677ff"
-            label="Backups armazenados" value={String(data?.count || 0)} />
+            label="Backups" value={String(data?.count || 0)} />
         </Col>
-        <Col xs={24} sm={6}>
+        <Col xs={12} sm={6}>
           <KpiCard icon={<FolderOpenOutlined />} color="#722ed1"
-            label="Espaço utilizado" value={fmtBytes(data?.total_size || 0)} />
+            label="Espaço" value={fmtBytes(data?.total_size || 0)} />
         </Col>
-        <Col xs={24} sm={6}>
+        <Col xs={12} sm={6}>
           <KpiCard icon={lastOk ? <CheckCircleFilled /> : <CloseCircleFilled />}
             color={lastOk ? "#52c41a" : data?.last_status ? "#f5222d" : "#8c8c8c"}
-            label="Último backup"
-            value={data?.last_status ? (lastOk ? "Verificado" : "Verificação falhou") : "Nenhum"} />
+            label="Status"
+            value={data?.last_status ? (lastOk ? "OK" : "Falha") : "—"} />
         </Col>
-        <Col xs={24} sm={6}>
+        <Col xs={12} sm={6}>
           <KpiCard icon={<ClockCircleOutlined />} color="#fa8c16"
-            label="Executado em" value={data?.last_run ? fmtDate(data.last_run) : "—"} />
+            label="Último" value={data?.last_run ? fmtDate(data.last_run) : "—"} />
         </Col>
       </Row>
 
