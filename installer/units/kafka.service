@@ -1,0 +1,18 @@
+[Unit]
+Description=Apache Kafka - Distributed Streaming Platform
+Documentation=https://kafka.apache.org/
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Environment="KAFKA_HEAP_OPTS=-Xmx512M -Xms512M"
+ExecStart=/opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+ExecStop=/opt/kafka/bin/kafka-server-stop.sh
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
