@@ -1,7 +1,7 @@
 """Network: VLAN/zones (CRUD), DHCP leases and static reservations."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from ..services import dns, fwmanage, netiface, network, system
@@ -280,3 +280,70 @@ def dns_stats():
 @router.get("/dns/recent")
 def dns_recent(limit: int = 80):
     return dns.recent_queries(limit=limit)
+
+
+# ------------------------------------------------- SSH remote access (mgmt) ---
+# Managed SSH remote-access policy with firewall liberation rules. The screen
+# lives under "Rede" but the rules render into the managed firewall (fwmanage),
+# so the policy-drop chain stays the single source of truth and anti-lockout is
+# preserved (LAN/zones always reach SSH; established sessions are never cut).
+
+
+class SshAccessModel(BaseModel):
+    port: int = Field(22, ge=1, le=65535)
+    wan_policy: str = Field("throttle", pattern="^(throttle|allowlist|block)$")
+    wan_rate: str = "15/minute"
+
+
+class SshRuleModel(BaseModel):
+    id: str | None = None
+    source: str
+    description: str = ""
+    enabled: bool = True
+
+
+def _ssh_guard(fn, *args, revert_after: int = 0):
+    try:
+        if revert_after and revert_after > 0:
+            with fwmanage.arm_revert(min(int(revert_after), 600)):
+                return fn(*args)
+        return fn(*args)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ssh-access")
+def ssh_access():
+    return fwmanage.get_ssh_access()
+
+
+@router.put("/ssh-access")
+def update_ssh_access(cfg: SshAccessModel,
+                      revert_after: int = Query(0, ge=0, le=600)):
+    _ssh_guard(fwmanage.set_ssh_access, cfg.model_dump(), revert_after=revert_after)
+    return fwmanage.get_ssh_access()
+
+
+@router.post("/ssh-access/rules")
+def create_ssh_rule(rule: SshRuleModel,
+                    revert_after: int = Query(0, ge=0, le=600)):
+    _ssh_guard(fwmanage.save_ssh_rule, rule.model_dump(exclude_none=True),
+               revert_after=revert_after)
+    return fwmanage.get_ssh_access()
+
+
+@router.put("/ssh-access/rules/{rid}")
+def update_ssh_rule(rid: str, rule: SshRuleModel,
+                    revert_after: int = Query(0, ge=0, le=600)):
+    data = rule.model_dump(exclude_none=True)
+    data["id"] = rid
+    _ssh_guard(fwmanage.save_ssh_rule, data, revert_after=revert_after)
+    return fwmanage.get_ssh_access()
+
+
+@router.delete("/ssh-access/rules/{rid}")
+def remove_ssh_rule(rid: str, revert_after: int = Query(0, ge=0, le=600)):
+    _ssh_guard(fwmanage.delete_ssh_rule, rid, revert_after=revert_after)
+    return fwmanage.get_ssh_access()

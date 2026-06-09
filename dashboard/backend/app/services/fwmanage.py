@@ -175,6 +175,117 @@ _SSH_WAN_RATE = "15/minute"
 # be tightened later by the operator, but reachability is non-negotiable.
 _MGMT_WEB_PORTS = "{ 80, 443 }"
 
+# --------------------------------------------------------- SSH remote access ---
+# Managed SSH remote-access policy (the "Acesso remoto SSH" screen under Rede).
+# The appliance LAN/zones can ALWAYS reach SSH (local anti-lockout); only the
+# WAN-facing behaviour is governed here:
+#   * throttle  — accept from any WAN source, rate-limited per source IP (default,
+#                 mirrors the historical behaviour);
+#   * allowlist — accept ONLY from explicitly liberated sources, drop the rest;
+#   * block     — no new SSH from the WAN at all.
+# Established sessions are accepted at the top of the chain, so an operator who is
+# already connected is never cut off by a policy change.
+_SSH_POLICIES = {"throttle", "allowlist", "block"}
+
+
+def _default_ssh_access() -> dict[str, Any]:
+    return {
+        "port": 22,
+        "wan_policy": "throttle",
+        "wan_rate": _SSH_WAN_RATE,
+        "allow_rules": [],   # [{id, source(ip/cidr), description, enabled}]
+    }
+
+
+def _norm_ssh_rule(r: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": r.get("id") or _new_id(),
+        "source": (r.get("source") or "").strip(),
+        "description": (r.get("description") or "").strip(),
+        "enabled": bool(r.get("enabled", True)),
+    }
+
+
+def _ssh_access(model: dict[str, Any]) -> dict[str, Any]:
+    """Normalised ssh_access section, migrating the legacy top-level
+    ``ssh_wan_rate`` so older models keep working."""
+    s = _default_ssh_access()
+    raw = model.get("ssh_access") or {}
+    for k in ("port", "wan_policy", "wan_rate"):
+        if raw.get(k) not in (None, ""):
+            s[k] = raw[k]
+    if not raw.get("wan_rate") and model.get("ssh_wan_rate"):
+        s["wan_rate"] = model["ssh_wan_rate"]
+    s["port"] = int(s["port"] or 22)
+    s["allow_rules"] = [_norm_ssh_rule(r) for r in (raw.get("allow_rules") or [])]
+    return s
+
+
+def _validate_ssh_source(src: str) -> str:
+    src = (src or "").strip()
+    try:
+        ipaddress.ip_network(src, strict=False)
+    except ValueError:
+        raise ValueError(f"origem inválida (use IP ou CIDR): {src!r}")
+    return src
+
+
+def _validate_ssh_access(s: dict[str, Any]) -> None:
+    if s["wan_policy"] not in _SSH_POLICIES:
+        raise ValueError("política SSH inválida (use throttle, allowlist ou block)")
+    if not (1 <= int(s["port"]) <= 65535):
+        raise ValueError("porta SSH deve estar entre 1 e 65535")
+    if not _RATE_RE.match((s.get("wan_rate") or "").strip()):
+        raise ValueError("taxa inválida (ex.: 15/minute)")
+    seen: set[str] = set()
+    for r in s["allow_rules"]:
+        src = _validate_ssh_source(r["source"])
+        if src in seen:
+            raise ValueError(f"origem duplicada na lista de permissões: {src}")
+        seen.add(src)
+    if s["wan_policy"] == "allowlist" and not any(
+            r["enabled"] for r in s["allow_rules"]):
+        raise ValueError(
+            "o modo lista de permissões exige ao menos uma origem habilitada")
+
+
+def _ssh_saddr_match(source: str) -> str:
+    """nft source-address match for an IPv4/IPv6 host or CIDR."""
+    net = ipaddress.ip_network(source.strip(), strict=False)
+    family = "ip6" if net.version == 6 else "ip"
+    return f"{family} saddr {source.strip()}"
+
+
+def _ssh_live_status() -> dict[str, Any]:
+    """Best-effort live view of the host SSH daemon (active + listening ports),
+    so the operator can confirm the firewall port matches the real sshd."""
+    active = False
+    for unit in ("ssh", "sshd"):
+        try:
+            r = shell.run(["systemctl", "is-active", unit], timeout=8)
+        except Exception:
+            continue
+        if r.stdout.strip() == "active":
+            active = True
+            break
+    ports: set[int] = set()
+    try:
+        r = shell.run(["ss", "-H", "-tlnp"], timeout=8)
+        for line in r.stdout.splitlines():
+            if "sshd" not in line and "ssh" not in line.lower():
+                continue
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            local = parts[3]
+            tail = local.rsplit(":", 1)
+            if len(tail) == 2 and tail[1].isdigit():
+                ports.add(int(tail[1]))
+    except Exception:
+        pass
+    return {"active": active, "listen_ports": sorted(ports)}
+
+
 # --------------------------------------------------------------- validation ---
 
 
@@ -275,6 +386,7 @@ def _default_model() -> dict[str, Any]:
         "port_forwards": [],
         "outbound_nat": {"mode": "auto", "rules": snat_rules},
         "zone_policies": _default_zone_policies(zone_names),
+        "ssh_access": _default_ssh_access(),
     }
 
 
@@ -303,6 +415,10 @@ def load_model() -> dict[str, Any]:
             data.setdefault("filter_rules", [])
             data.setdefault("port_forwards", [])
             data.setdefault("outbound_nat", {"mode": "auto", "rules": []})
+            # Normalise the managed SSH remote-access policy (migrates the legacy
+            # top-level ssh_wan_rate into the structured section).
+            data["ssh_access"] = _ssh_access(data)
+            data.pop("ssh_wan_rate", None)
             # Egress is now governed by the inter-zone matrix; drop the legacy
             # seed forward accepts so a WAN "block" cell isn't pre-empted.
             data["filter_rules"] = [
@@ -594,19 +710,34 @@ def render(model: dict[str, Any]) -> str:
     # the policy-drop inet table silently breaks all IPv6 the moment it is
     # enabled on any interface. Kept always-on so the box is v6-safe-by-default.
     a("        ip6 nexthdr ipv6-icmp accept")
-    # SSH management: internal zones unrestricted; from WAN, throttle *new*
-    # connections to blunt brute-force. Established sessions are accepted
-    # above, so the operator is never locked out of an active session.
-    ssh_rate = (model.get("ssh_wan_rate") or _SSH_WAN_RATE).strip()
+    # SSH management (gerido pela tela "Acesso remoto SSH"): internal zones are
+    # always free (local anti-lockout); the WAN follows the configured policy.
+    # Established sessions are accepted above, so a change never cuts an operator
+    # who is already connected.
+    ssh = _ssh_access(model)
+    ssh_port = int(ssh["port"])
+    ssh_rate = (ssh.get("wan_rate") or _SSH_WAN_RATE).strip()
+    policy = ssh["wan_policy"]
     if wan:
         wan_if = _v_iface(wan)
-        # Per-source meter: each source IP gets its own budget, so a scanner
-        # flooding SSH can never exhaust the operator's allowance.
-        a(f'        iifname "{wan_if}" tcp dport 22 ct state new meter mx_ssh_wan '
-          f'{{ ip saddr limit rate {ssh_rate} burst 5 packets }} accept')
-        a(f'        iifname "{wan_if}" tcp dport 22 ct state new '
-          'log prefix "NFT-SSH-THROTTLE: " drop')
-    a("        tcp dport 22 accept")
+        if policy == "allowlist":
+            # Liberated sources only; everything else from the WAN is dropped.
+            for r in ssh["allow_rules"]:
+                if not r.get("enabled"):
+                    continue
+                a(f'        iifname "{wan_if}" {_ssh_saddr_match(r["source"])} '
+                  f'tcp dport {ssh_port} accept')
+            a(f'        iifname "{wan_if}" tcp dport {ssh_port} ct state new '
+              'log prefix "NFT-SSH-DENY: " drop')
+        elif policy == "block":
+            a(f'        iifname "{wan_if}" tcp dport {ssh_port} ct state new '
+              'log prefix "NFT-SSH-BLOCK: " drop')
+        else:  # throttle (default): per-source brute-force budget
+            a(f'        iifname "{wan_if}" tcp dport {ssh_port} ct state new meter '
+              f'mx_ssh_wan {{ ip saddr limit rate {ssh_rate} burst 5 packets }} accept')
+            a(f'        iifname "{wan_if}" tcp dport {ssh_port} ct state new '
+              'log prefix "NFT-SSH-THROTTLE: " drop')
+    a(f"        tcp dport {ssh_port} accept")
     # Management web UI anti-lockout: the dashboard must stay reachable even
     # under a policy-drop input chain (mirrors the SSH rule above).
     a(f"        tcp dport {_MGMT_WEB_PORTS} accept")
@@ -1156,6 +1287,67 @@ def delete_alias(aid: str) -> dict[str, Any]:
 
 
 # outbound nat ----------------------------------------------------------------
+
+# SSH remote access -----------------------------------------------------------
+
+def get_ssh_access() -> dict[str, Any]:
+    """Managed SSH remote-access policy + liberation rules + live sshd status."""
+    s = _ssh_access(load_model())
+    s["live"] = _ssh_live_status()
+    return s
+
+
+def set_ssh_access(data: dict[str, Any]) -> dict[str, Any]:
+    """Update the WAN SSH policy/port/rate (liberation rules are managed via the
+    dedicated rule endpoints). Applied through the managed firewall render."""
+    def op(model):
+        s = _ssh_access(model)
+        for k in ("port", "wan_policy", "wan_rate"):
+            if data.get(k) is not None:
+                s[k] = data[k]
+        s["port"] = int(s["port"])
+        _validate_ssh_access(s)
+        model["ssh_access"] = s
+        model.pop("ssh_wan_rate", None)
+    return _mutate(op)
+
+
+def save_ssh_rule(rule: dict[str, Any]) -> dict[str, Any]:
+    """Create/update an SSH liberation rule (a WAN source allowed to reach SSH)."""
+    _validate_ssh_source(rule.get("source", ""))
+
+    def op(model):
+        s = _ssh_access(model)
+        rules = s["allow_rules"]
+        norm = _norm_ssh_rule(rule)
+        rid = rule.get("id")
+        if rid:
+            for i, r in enumerate(rules):
+                if r["id"] == rid:
+                    rules[i] = {**r, **norm, "id": rid}
+                    break
+            else:
+                norm["id"] = _new_id()
+                rules.append(norm)
+        else:
+            norm["id"] = _new_id()
+            rules.append(norm)
+        s["allow_rules"] = rules
+        _validate_ssh_access(s)
+        model["ssh_access"] = s
+        model.pop("ssh_wan_rate", None)
+    return _mutate(op)
+
+
+def delete_ssh_rule(rid: str) -> dict[str, Any]:
+    def op(model):
+        s = _ssh_access(model)
+        s["allow_rules"] = [r for r in s["allow_rules"] if r["id"] != rid]
+        _validate_ssh_access(s)
+        model["ssh_access"] = s
+        model.pop("ssh_wan_rate", None)
+    return _mutate(op)
+
 
 def get_outbound() -> dict[str, Any]:
     return load_model().get("outbound_nat", {"mode": "auto", "rules": []})

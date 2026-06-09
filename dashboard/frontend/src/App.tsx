@@ -62,6 +62,7 @@ import { FortinetPage } from "./pages/vpn/fortinet";
 import { ReservationsPage } from "./pages/network/reservations";
 import { LeasesPage } from "./pages/network/leases";
 import { DnsPage } from "./pages/network/dns";
+import { SshAccessPage } from "./pages/network/ssh";
 import { DomainsPage } from "./pages/content/domains";
 import { ContentFilterPage } from "./pages/content/filter";
 import { ThreatIntelPage } from "./pages/threatintel";
@@ -304,6 +305,15 @@ export default function App() {
               },
             },
             {
+              name: "ssh-access",
+              list: "/network/ssh-access",
+              meta: {
+                parent: "network-group",
+                label: "Acesso remoto SSH",
+                icon: <SafetyCertificateOutlined />,
+              },
+            },
+            {
               name: "vpn-group",
               meta: { label: "VPN", icon: <SafetyCertificateOutlined /> },
             },
@@ -423,6 +433,7 @@ export default function App() {
                 />
                 <Route path="leases" element={<LeasesPage />} />
                 <Route path="dns" element={<DnsPage />} />
+                <Route path="ssh-access" element={<SshAccessPage />} />
               </Route>
 
               <Route path="/vpn">
