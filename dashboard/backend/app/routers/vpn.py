@@ -78,3 +78,42 @@ def peer_config(peer_id: str) -> str:
 @router.get("/wireguard/peers/{peer_id}/qr")
 def peer_qr(peer_id: str) -> dict[str, Any]:
     return {"qr": _guard(vpn.peer_qr, peer_id)}
+
+
+class OpenVpnServerModel(BaseModel):
+    enabled: bool = False
+    proto: Literal["udp", "tcp"] = "udp"
+    port: int = Field(1194, ge=1, le=65535)
+    subnet: str = "10.21.0.0/24"
+    dev: str = "tun0"
+    dns: str = ""
+    full_tunnel: bool = True
+    endpoint_host: str = ""
+
+
+class OpenVpnClientModel(BaseModel):
+    id: Optional[str] = None
+    name: str
+    type: Literal["roadwarrior", "site"] = "roadwarrior"
+    enabled: bool = True
+    site_subnets: list[str] = Field(default_factory=list)
+
+
+@router.put("/openvpn")
+def set_openvpn(cfg: OpenVpnServerModel) -> dict[str, Any]:
+    return _guard(vpn.set_openvpn, cfg.model_dump())
+
+
+@router.post("/openvpn/clients")
+def save_client(client: OpenVpnClientModel) -> dict[str, Any]:
+    return _guard(vpn.save_client, client.model_dump(exclude_none=True))
+
+
+@router.delete("/openvpn/clients/{client_id}")
+def delete_client(client_id: str) -> dict[str, Any]:
+    return _guard(vpn.delete_client, client_id)
+
+
+@router.get("/openvpn/clients/{client_id}/config", response_class=PlainTextResponse)
+def openvpn_client_config(client_id: str) -> str:
+    return _guard(vpn.openvpn_client_config, client_id)

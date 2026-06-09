@@ -13,11 +13,22 @@ from typing import Any
 
 from . import model as _m
 from . import wireguard as _wg
+from . import openvpn as _ov
 
-# Re-export nft fragment helpers for fwmanage.render().
-nft_input_accepts = _wg.nft_input_accepts
-nft_forward_accepts = _wg.nft_forward_accepts
-nft_postrouting_masq = _wg.nft_postrouting_masq
+
+# Aggregated nft fragment helpers consumed by fwmanage.render() — every enabled
+# VPN role contributes its firewall openings (WireGuard + OpenVPN).
+def nft_input_accepts(wan: str | None = None) -> list[str]:
+    return _wg.nft_input_accepts(wan) + _ov.nft_input_accepts(wan)
+
+
+def nft_forward_accepts(wan: str | None = None) -> list[str]:
+    return _wg.nft_forward_accepts(wan) + _ov.nft_forward_accepts(wan)
+
+
+def nft_postrouting_masq(wan: str | None = None) -> list[str]:
+    return _wg.nft_postrouting_masq(wan) + _ov.nft_postrouting_masq(wan)
+
 
 _lock = threading.RLock()
 
@@ -28,7 +39,7 @@ _SERVER_FIELDS = (
 # ---------------------------------------------------------------- status ------
 
 def get_status() -> dict[str, Any]:
-    return {"wireguard": _wg.status()}
+    return {"wireguard": _wg.status(), "openvpn": _ov.status()}
 
 
 # ------------------------------------------------------- server settings ------
@@ -147,3 +158,82 @@ def _peer_public(p: dict[str, Any]) -> dict[str, Any]:
         "endpoint": p.get("endpoint", ""),
         "full_tunnel": p.get("full_tunnel", True),
     }
+
+
+# ----------------------------------------------------------- OpenVPN server ---
+
+_OVPN_FIELDS = (
+    "enabled", "proto", "port", "subnet", "dev", "dns", "full_tunnel", "endpoint_host")
+
+
+def set_openvpn(data: dict[str, Any]) -> dict[str, Any]:
+    with _lock:
+        model = _m.load_model()
+        ov = model["openvpn"]
+        for k in _OVPN_FIELDS:
+            if k in data and data[k] is not None:
+                ov[k] = data[k]
+        ov = _m._norm_openvpn(ov)
+        model["openvpn"] = ov
+        _m.validate_openvpn(ov)
+        _m.save_model(model)
+        _ov.apply_server(ov)
+        return _ov.status()
+
+
+def save_client(data: dict[str, Any]) -> dict[str, Any]:
+    with _lock:
+        model = _m.load_model()
+        ov = model["openvpn"]
+        client = _m._norm_client(data)
+        existing = next((c for c in ov["clients"] if c["id"] == client["id"]), None)
+        if existing:
+            client["cn"] = existing["cn"]  # CN is immutable once issued
+        if not client["cn"]:
+            taken = {c["cn"] for c in ov["clients"] if c["cn"]}
+            client["cn"] = _ov.cn_for(client["name"], taken)
+        ov["clients"] = [c for c in ov["clients"] if c["id"] != client["id"]] + [client]
+        ov = _m._norm_openvpn(ov)
+        model["openvpn"] = ov
+        _m.validate_openvpn(ov)
+        _m.save_model(model)
+        if ov["enabled"]:
+            _ov.apply_server(ov)
+        return {
+            "id": client["id"], "name": client["name"], "cn": client["cn"],
+            "type": client["type"], "enabled": client["enabled"],
+            "site_subnets": client["site_subnets"],
+        }
+
+
+def delete_client(client_id: str) -> dict[str, Any]:
+    with _lock:
+        model = _m.load_model()
+        ov = model["openvpn"]
+        client = next((c for c in ov["clients"] if c["id"] == client_id), None)
+        if not client:
+            raise ValueError("cliente não encontrado")
+        # Real revocation: the cert is invalidated via the CRL even if the client
+        # keeps its key file.
+        try:
+            _ov.revoke_client(client["cn"])
+        except Exception:
+            pass
+        ov["clients"] = [c for c in ov["clients"] if c["id"] != client_id]
+        model["openvpn"] = ov
+        _m.save_model(model)
+        if ov["enabled"]:
+            _ov.apply_server(ov)
+        return {"deleted": client_id}
+
+
+def openvpn_client_config(client_id: str) -> str:
+    model = _m.load_model()
+    ov = model["openvpn"]
+    client = next((c for c in ov["clients"] if c["id"] == client_id), None)
+    if not client:
+        raise ValueError("cliente não encontrado")
+    if not _ov.pki_ready():
+        raise ValueError("PKI ainda não inicializada — ative o OpenVPN primeiro")
+    _ov.build_client(client["cn"])
+    return _ov.client_ovpn(ov, client)

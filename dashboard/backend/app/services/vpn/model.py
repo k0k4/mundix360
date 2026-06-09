@@ -26,6 +26,8 @@ MODEL_PATH = "/etc/mundix/vpn.json"
 # WireGuard interface names we manage (wg0, wg1, ...). Kept deliberately tight
 # so a value can be interpolated into an nft rule / systemd unit name safely.
 _WG_IFACE_RE = re.compile(r"^wg[0-9]{1,3}$")
+# OpenVPN tun device names (tun0, tun1, ...).
+_TUN_IFACE_RE = re.compile(r"^tun[0-9]{1,3}$")
 # Opaque base64 WireGuard keys are exactly 44 chars ending in '='.
 _WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{43}=$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9 ._-]{1,40}$")
@@ -49,7 +51,45 @@ def _default_wireguard() -> dict[str, Any]:
 
 
 def _default_model() -> dict[str, Any]:
-    return {"wireguard": _default_wireguard()}
+    return {"wireguard": _default_wireguard(), "openvpn": _default_openvpn()}
+
+
+def _default_openvpn() -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "proto": "udp",
+        "port": 1194,
+        "subnet": "10.21.0.0/24",
+        "dev": "tun0",
+        "dns": "",
+        "full_tunnel": True,
+        "endpoint_host": "",          # public host clients dial; auto = WAN IP
+        "clients": [],
+    }
+
+
+def _norm_client(c: dict[str, Any]) -> dict[str, Any]:
+    ctype = c.get("type") if c.get("type") in ("roadwarrior", "site") else "roadwarrior"
+    return {
+        "id": c.get("id") or os.urandom(6).hex(),
+        "name": (c.get("name") or "client").strip(),
+        "cn": (c.get("cn") or "").strip(),
+        "type": ctype,
+        "enabled": bool(c.get("enabled", True)),
+        "site_subnets": [s.strip() for s in (c.get("site_subnets") or []) if s and s.strip()],
+    }
+
+
+def _norm_openvpn(o: dict[str, Any]) -> dict[str, Any]:
+    base = _default_openvpn()
+    base.update({k: o[k] for k in base if k in o and k != "clients"})
+    base["enabled"] = bool(o.get("enabled", False))
+    base["proto"] = o.get("proto") if o.get("proto") in ("udp", "tcp") else "udp"
+    base["port"] = int(o.get("port") or 1194)
+    base["dev"] = (o.get("dev") or "tun0").strip()
+    base["full_tunnel"] = bool(o.get("full_tunnel", True))
+    base["clients"] = [_norm_client(c) for c in o.get("clients", [])]
+    return base
 
 
 # --------------------------------------------------------------- normalise ----
@@ -91,7 +131,10 @@ def load_model() -> dict[str, Any]:
             m = json.load(f)
     except (OSError, ValueError):
         return _default_model()
-    return {"wireguard": _norm_wireguard(m.get("wireguard", {}))}
+    return {
+        "wireguard": _norm_wireguard(m.get("wireguard", {})),
+        "openvpn": _norm_openvpn(m.get("openvpn", {})),
+    }
 
 
 def save_model(model: dict[str, Any]) -> None:
@@ -108,6 +151,12 @@ def save_model(model: dict[str, Any]) -> None:
 def v_iface(name: str) -> str:
     if not _WG_IFACE_RE.match(name or ""):
         raise ValueError(f"interface WireGuard inválida (use wg0..wg999): {name!r}")
+    return name
+
+
+def v_tun(name: str) -> str:
+    if not _TUN_IFACE_RE.match(name or ""):
+        raise ValueError(f"dispositivo tun inválido (use tun0..tun999): {name!r}")
     return name
 
 
@@ -175,3 +224,31 @@ def validate_wireguard(w: dict[str, Any]) -> None:
                 raise ValueError(f"peer '{p['name']}' sem chave pública")
             if not p["address"]:
                 raise ValueError(f"peer '{p['name']}' sem endereço de túnel")
+
+
+def validate_openvpn(o: dict[str, Any]) -> None:
+    v_tun(o["dev"])
+    if o["proto"] not in ("udp", "tcp"):
+        raise ValueError("protocolo deve ser 'udp' ou 'tcp'")
+    if not (1 <= int(o["port"]) <= 65535):
+        raise ValueError("porta deve estar entre 1 e 65535")
+    _v_cidr(o["subnet"], "rede do servidor OpenVPN")
+    if o.get("dns"):
+        for d in re.split(r"[,\s]+", o["dns"].strip()):
+            if d:
+                try:
+                    ipaddress.ip_address(d)
+                except ValueError:
+                    raise ValueError(f"DNS inválido: {d!r}")
+    seen_cn: set[str] = set()
+    for c in o["clients"]:
+        if not _NAME_RE.match(c["name"]):
+            raise ValueError(f"nome de cliente inválido: {c['name']!r}")
+        if c["cn"] and c["cn"] in seen_cn:
+            raise ValueError(f"CN duplicado: {c['cn']}")
+        if c["cn"]:
+            seen_cn.add(c["cn"])
+        for s in c["site_subnets"]:
+            _v_cidr(s, f"sub-rede do site '{c['name']}'")
+        if c["type"] == "site" and not c["site_subnets"]:
+            raise ValueError(f"cliente site '{c['name']}' exige ao menos uma sub-rede remota")

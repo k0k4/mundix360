@@ -29,6 +29,8 @@ ALLOWED_BINARIES = {
     "wg",
     "wg-quick",
     "qrencode",
+    "openvpn",
+    "/usr/share/easy-rsa/easyrsa",
     "/opt/mundix360/scripts/active-response/block-ip.sh",
     "/usr/sbin/nft",
     "/bin/systemctl",
