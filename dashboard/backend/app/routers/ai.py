@@ -56,7 +56,7 @@ class TestIn(BaseModel):
 
 
 @router.post("/chat/stream")
-async def chat_stream(body: ChatIn):
+async def chat_stream(body: ChatIn, request: Request):
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="mensagem vazia")
     cid = body.conversation_id
@@ -92,12 +92,21 @@ async def chat_stream(body: ChatIn):
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
                 except asyncio.TimeoutError:
+                    # No output for a while: keep the proxy/browser alive, but also
+                    # check whether the client went away. If so, ask the agent to
+                    # stop cooperatively so it stops burning CPU server-side.
+                    if await request.is_disconnected():
+                        agent.request_stop(cid)
+                        break
                     yield ": ping\n\n"  # SSE comment keepalive
                     continue
                 if item is _DONE:
                     break
                 yield item
         finally:
+            # Belt and suspenders: signal the agent and cancel the pump so nothing
+            # keeps running once this response ends (normal finish, stop, or drop).
+            agent.request_stop(cid)
             if not task.done():
                 task.cancel()
 
@@ -106,6 +115,17 @@ async def chat_stream(body: ChatIn):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class StopIn(BaseModel):
+    conversation_id: str
+
+
+@router.post("/chat/stop")
+def chat_stop(body: StopIn):
+    """Stop the in-flight turn for a conversation. Idempotent: returns
+    ``{"stopped": false}`` if nothing was running."""
+    return {"stopped": agent.request_stop(body.conversation_id)}
 
 
 # --- conversations ---------------------------------------------------------

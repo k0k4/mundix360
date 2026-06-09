@@ -45,17 +45,37 @@ _clients: dict[tuple, AsyncOpenAI] = {}
 # consecutive (A,A,A,A) and alternating (A,B,A,B,...) non-progressing loops.
 _STUCK_REPEATS = 4
 
-# Absolute wall-clock backstop for a single turn (seconds). With iterations
-# unlimited, this is the final safety net against a model that loops forever
-# while always producing *different* output (so the stuck guard never fires).
-# Generous on purpose: real tasks finish well under this.
-_MAX_RUN_SECONDS = 1800
+# Absolute wall-clock backstop for a single turn (seconds). Final safety net
+# against a model that loops forever while always producing *different* output
+# (so the stuck guard never fires). Kept tight for an interactive appliance on a
+# CPU-constrained box: a turn that has not finished in this window is, in
+# practice, stuck — better to summarise and return control than to keep both
+# Atom cores pinned.
+_MAX_RUN_SECONDS = 420
 
 # Max seconds to wait for the NEXT streamed chunk from the provider before we
 # give up on a stalled connection. A half-open TCP stream (proxy/idle drop) would
 # otherwise hang the turn indefinitely even though the per-request timeout already
 # elapsed at connection level. Caught by run() -> surfaced as a clean error.
 _STREAM_IDLE_TIMEOUT = 90.0
+
+# Cooperative cancellation. Each in-flight turn registers an asyncio.Event keyed
+# by conversation_id; a stop request (UI "Parar" button -> POST /chat/stop, or a
+# detected client disconnect) sets it. run()/_stream_turn check it between chunks
+# and iterations, close the provider stream, and end the turn promptly. Without
+# this, aborting the browser fetch left the agent running server-side — burning
+# both CPU cores for up to the wall-clock backstop with nobody listening.
+_cancels: dict[str, asyncio.Event] = {}
+
+
+def request_stop(conversation_id: str) -> bool:
+    """Signal the in-flight turn for ``conversation_id`` to stop. Returns True if
+    a turn was actually registered (running) so callers can report status."""
+    ev = _cancels.get(conversation_id)
+    if ev is None:
+        return False
+    ev.set()
+    return True
 
 
 def client(cfg: dict[str, Any]) -> AsyncOpenAI:
@@ -163,13 +183,15 @@ def _ensure_json_tool_args(messages: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 async def _stream_turn(messages: list[dict[str, Any]], masker: Masker, cfg: dict[str, Any],
-                       tools_enabled: bool = True):
+                       tools_enabled: bool = True, cancel: asyncio.Event | None = None):
     """One model call. Yields ('token', text) for content and returns the
     accumulated (content, tool_calls) via a '_final' item.
 
     `messages` are masked (placeholders) before being sent; streamed content is
     unmasked back to real values for the operator. When ``tools_enabled`` is
-    False the model is forced to answer in prose (no further tool calls)."""
+    False the model is forced to answer in prose (no further tool calls). If a
+    ``cancel`` event is provided and set mid-stream, the provider connection is
+    closed and whatever partial content arrived so far is returned via '_final'."""
     kwargs: dict[str, Any] = {}
     if tools_enabled:
         kwargs["tools"] = tools.TOOLS
@@ -191,6 +213,12 @@ async def _stream_turn(messages: list[dict[str, Any]], masker: Masker, cfg: dict
 
     stream_iter = stream.__aiter__()
     while True:
+        if cancel is not None and cancel.is_set():
+            try:
+                await stream.close()  # release the provider connection promptly
+            except Exception:
+                pass
+            break
         try:
             chunk = await asyncio.wait_for(stream_iter.__anext__(), timeout=_STREAM_IDLE_TIMEOUT)
         except StopAsyncIteration:
@@ -250,6 +278,10 @@ async def run(conversation_id: str, user_message: str, context: str | None = Non
     masker: Masker = Masker() if cfg["masking_enabled"] else NullMasker()
     executed: list[str] = []  # human labels of operational actions applied this turn
 
+    # Register this turn for cooperative cancellation (UI "Parar" / disconnect).
+    cancel = asyncio.Event()
+    _cancels[conversation_id] = cancel
+
     try:
         # max_tool_iters <= 0 means "no limit" — iterate until the model stops
         # requesting tools. A stuck-loop guard (below) still prevents a genuine
@@ -260,6 +292,8 @@ async def run(conversation_id: str, user_message: str, context: str | None = Non
         error_counts: dict[str, int] = {}
         started = time.monotonic()
         for _ in loop:
+            if cancel.is_set():
+                break
             if time.monotonic() - started > _MAX_RUN_SECONDS:
                 break
             content = ""
@@ -267,7 +301,7 @@ async def run(conversation_id: str, user_message: str, context: str | None = Non
             usage = None
             finish = None
 
-            async for kind, payload in _stream_turn(messages, masker, cfg):
+            async for kind, payload in _stream_turn(messages, masker, cfg, cancel=cancel):
                 if kind == "token":
                     yield _sse("token", {"text": payload})
                 elif kind == "_final":
@@ -281,6 +315,16 @@ async def run(conversation_id: str, user_message: str, context: str | None = Non
 
             if usage:
                 yield _sse("usage", usage)
+
+            # User asked to stop (or client disconnected) mid-stream: persist
+            # whatever partial answer arrived, acknowledge, and end the turn —
+            # do NOT call the model again (that would defeat the stop).
+            if cancel.is_set():
+                if content:
+                    memory.add_message(conversation_id, "assistant", content=content)
+                yield _sse("stopped", {})
+                yield _sse("done", {})
+                return
 
             # No tools requested -> final answer
             if not tool_calls:
@@ -362,7 +406,7 @@ async def run(conversation_id: str, user_message: str, context: str | None = Non
 
             if paused:
                 # Let the model summarise, then stop and wait for the operator.
-                async for kind, payload in _stream_turn(messages, masker, cfg):
+                async for kind, payload in _stream_turn(messages, masker, cfg, cancel=cancel):
                     if kind == "token":
                         yield _sse("token", {"text": payload})
                     elif kind == "_final" and payload["content"]:
@@ -401,16 +445,23 @@ async def run(conversation_id: str, user_message: str, context: str | None = Non
                 if error_counts[err_sig] >= _STUCK_REPEATS:
                     break
 
-        # Reached only if the stuck-loop guard fired or a finite iteration limit
-        # was configured and exhausted. Force one final answer with tools disabled
-        # so the operator gets a useful summary instead of a dead-end notice.
+        # Reached only if the stuck-loop guard fired, the iteration/time limit was
+        # hit, or the user stopped. If stopped, acknowledge and end without calling
+        # the model again.
+        if cancel.is_set():
+            yield _sse("stopped", {})
+            yield _sse("done", {})
+            return
+
+        # Force one final answer with tools disabled so the operator gets a useful
+        # summary instead of a dead-end notice.
         messages.append({
             "role": "user",
             "content": ("Responda agora, de forma objetiva, com base nas "
                         "informações já coletadas — não chame mais ferramentas."),
         })
         final = ""
-        async for kind, payload in _stream_turn(messages, masker, cfg, tools_enabled=False):
+        async for kind, payload in _stream_turn(messages, masker, cfg, tools_enabled=False, cancel=cancel):
             if kind == "token":
                 yield _sse("token", {"text": payload})
             elif kind == "_final":
@@ -436,3 +487,8 @@ async def run(conversation_id: str, user_message: str, context: str | None = Non
 
         yield _sse("error", {"message": safety.redact(str(e)) or "erro no agente"})
         yield _sse("done", {})
+    finally:
+        # Drop the cancellation registration so a later stop on the same
+        # conversation can't accidentally target a finished/new turn.
+        if _cancels.get(conversation_id) is cancel:
+            _cancels.pop(conversation_id, None)

@@ -203,8 +203,19 @@ export function AssistantChat({
   const lastUserRef = useRef<string>("");
 
   const stop = useCallback(() => {
+    // Tell the server to stop the in-flight turn (so it stops burning CPU),
+    // then abort the local stream. Fire-and-forget: aborting is what the user
+    // sees, the stop request just frees the backend.
+    const id = cid;
+    if (id) {
+      fetch("/api/ai/chat/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ conversation_id: id }),
+      }).catch(() => {});
+    }
     abortRef.current?.abort();
-  }, []);
+  }, [cid]);
 
   useEffect(() => {
     setCid(conversationId ?? null);
@@ -349,6 +360,8 @@ export function AssistantChat({
               added: data.added,
             },
           ]);
+        } else if (event === "stopped") {
+          antdMessage.info("Geração interrompida");
         } else if (event === "error") {
           antdMessage.error(data.message || "Erro no agente");
         }

@@ -58,7 +58,11 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     ai_model: str = "qwen3.7-max"
     ai_max_tokens: int = 1536
-    ai_max_tool_iters: int = 0
+    # Cap on tool-calling iterations per turn. A finite default bounds runaway
+    # agent loops (the previous 0 = unlimited could pin the Atom's 2 cores until
+    # the wall-clock backstop). After this many rounds the agent is forced to
+    # answer from what it gathered. Operators can still raise it in AI settings.
+    ai_max_tool_iters: int = 12
     ai_request_timeout: int = 120
     ai_master_password: str = Field(
         "", validation_alias=AliasChoices("MUNDIX_AI_MASTER_PASSWORD", "AI_MASTER_PASSWORD")
