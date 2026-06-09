@@ -1,0 +1,17 @@
+[Unit]
+Description=Akvorado Console - Web UI for Flow Visualization
+Documentation=https://github.com/akvorado-network/akvorado
+After=network.target clickhouse-server.service
+Wants=clickhouse-server.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/akvorado console --config /opt/mundix360/configs/akvorado/console.yaml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
