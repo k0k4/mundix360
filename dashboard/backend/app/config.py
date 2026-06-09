@@ -57,7 +57,11 @@ class Settings(BaseSettings):
     )
     ai_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     ai_model: str = "qwen3.7-max"
-    ai_max_tokens: int = 1536
+    # Output token budget per model call. Qwen3-Max supports large completions;
+    # 1536 was far too small for a coding assistant and truncated answers/diffs
+    # mid-stream (showing up as empty assistant turns). Generous default so the
+    # model can actually finish reasoning and emit complete code.
+    ai_max_tokens: int = 8192
     # Cap on tool-calling iterations per turn. A finite default bounds runaway
     # agent loops (the previous 0 = unlimited could pin the Atom's 2 cores until
     # the wall-clock backstop). After this many rounds the agent is forced to

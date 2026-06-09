@@ -503,7 +503,11 @@ def _search_code(query: str, path: str | None, glob: str | None) -> dict[str, An
     cmd = ["grep", "-rInE", "--max-count=5",
            "--exclude-dir=.git", "--exclude-dir=__pycache__",
            "--exclude-dir=node_modules", "--exclude-dir=dist",
-           "--exclude=*.db", "--exclude=*.sqlite", "--exclude=*.env"]
+           "--exclude=*.db", "--exclude=*.sqlite", "--exclude=*.env",
+           # Stray Copilot/agent session transcripts dumped at the repo root are
+           # huge and pollute results with irrelevant chat history.
+           "--exclude=copilot-session-*.md", "--exclude=*.min.js",
+           "--exclude=*.map"]
     if glob:
         cmd.append(f"--include={glob}")
     cmd.extend(["--", query, real])

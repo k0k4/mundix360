@@ -244,7 +244,7 @@ def apply_updates(updates: dict[str, Any]) -> list[str]:
         elif k in _INT_KEYS:
             iv = int(v)
             bounds = {
-                "max_tokens": (64, 8192),
+                "max_tokens": (64, 32768),
                 "max_tool_iters": (0, 500),
                 "request_timeout": (5, 600),
             }[k]
