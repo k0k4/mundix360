@@ -19,18 +19,35 @@ PLATFORM_SERVICES = [
 
 
 def service_status(name: str) -> dict[str, Any]:
-    active = shell.run(["systemctl", "is-active", name], timeout=8)
-    enabled = shell.run(["systemctl", "is-enabled", name], timeout=8)
+    # Single `systemctl show` call returns load/active/unit-file state at once
+    # (cheaper than three separate is-active/is-enabled calls on this 2-core box).
+    # `--value` prints one value per line, in the order the -p flags are given.
+    r = shell.run(
+        ["systemctl", "show", "-p", "LoadState", "-p", "ActiveState",
+         "-p", "UnitFileState", "--value", name],
+        timeout=8,
+    )
+    lines = (r.stdout or "").splitlines()
+    load = (lines[0].strip() if len(lines) > 0 else "") or "unknown"
+    active = (lines[1].strip() if len(lines) > 1 else "") or "unknown"
+    enabled = (lines[2].strip() if len(lines) > 2 else "") or "unknown"
     return {
         "name": name,
-        "active": active.stdout.strip() or "unknown",
-        "enabled": enabled.stdout.strip() or "unknown",
-        "running": active.stdout.strip() == "active",
+        "active": active,
+        "enabled": enabled,
+        "running": active == "active",
+        # LoadState == "loaded" means the unit is actually installed on this host;
+        # "not-found" means we ship support for it but it isn't provisioned here.
+        "installed": load == "loaded",
     }
 
 
 def all_services() -> list[dict[str, Any]]:
-    return [service_status(s) for s in PLATFORM_SERVICES]
+    # Only surface services actually installed on this appliance, so the operator
+    # isn't confused by platform units we support but haven't provisioned here.
+    # PLATFORM_SERVICES stays the canonical superset; one installed later will
+    # appear automatically without a code change.
+    return [st for s in PLATFORM_SERVICES if (st := service_status(s))["installed"]]
 
 
 def control_service(name: str, action: str) -> dict[str, Any]:

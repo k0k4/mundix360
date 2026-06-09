@@ -27,6 +27,8 @@ import {
   RedoOutlined,
 } from "@ant-design/icons";
 import { Markdown } from "./Markdown";
+import { useGetIdentity } from "@refinedev/core";
+import type { Identity } from "../authProvider";
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -149,9 +151,11 @@ export function ToolBlock({ item }: { item: ToolCard }) {
 export function CodeChangeBlock({
   item,
   onConfirm,
+  isAdmin,
 }: {
   item: CodeChange;
   onConfirm: (c: CodeChange) => void;
+  isAdmin?: boolean;
 }) {
   return (
     <Card
@@ -203,10 +207,10 @@ export function CodeChangeBlock({
         ) : (
           <Button
             type="primary"
-            icon={<LockOutlined />}
+            icon={isAdmin ? <CheckCircleOutlined /> : <LockOutlined />}
             onClick={() => onConfirm(item)}
           >
-            Aplicar (requer senha)
+            {isAdmin ? "Aplicar" : "Aplicar (requer senha)"}
           </Button>
         )}
       </Space>
@@ -233,6 +237,8 @@ export function AssistantChat({
   const [pwModal, setPwModal] = useState<CodeChange | null>(null);
   const [password, setPassword] = useState("");
   const [confirming, setConfirming] = useState(false);
+  const { data: identity } = useGetIdentity<Identity>();
+  const isAdmin = identity?.role === "admin";
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastUserRef = useRef<string>("");
@@ -441,17 +447,22 @@ export function AssistantChat({
     if (!streaming && lastUserRef.current) send(lastUserRef.current);
   };
 
-  const confirmCodeChange = async () => {
-    if (!pwModal) return;
+  const doApply = async (change: CodeChange, pw: string) => {
     setConfirming(true);
     try {
       const r = await fetch("/api/ai/code-change/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ change_id: pwModal.id, password }),
+        body: JSON.stringify({
+          change_id: change.id,
+          password: pw,
+          conversation_id: cid,
+        }),
       });
       if (r.status === 403) {
-        antdMessage.error("Senha incorreta.");
+        antdMessage.error(
+          isAdmin ? "Permissão negada." : "Senha incorreta.",
+        );
         return;
       }
       if (!r.ok) {
@@ -461,11 +472,13 @@ export function AssistantChat({
       }
       const j = await r.json();
       antdMessage.success(
-        `Alteração aplicada${j.commit ? ` (${j.commit.slice(0, 8)})` : ""}.`,
+        `Alteração aplicada${j.commit ? ` (${j.commit.slice(0, 8)})` : ""}${
+          j.ticket ? ` · chamado ${j.ticket}` : ""
+        }.`,
       );
       setItems((prev) =>
         prev.map((it) =>
-          it.kind === "code" && it.id === pwModal.id
+          it.kind === "code" && it.id === change.id
             ? { ...it, resolved: "applied" }
             : it,
         ),
@@ -477,6 +490,11 @@ export function AssistantChat({
     } finally {
       setConfirming(false);
     }
+  };
+
+  const confirmCodeChange = async () => {
+    if (!pwModal) return;
+    await doApply(pwModal, password);
   };
 
   return (
@@ -521,9 +539,14 @@ export function AssistantChat({
                 <CodeChangeBlock
                   key={idx}
                   item={it}
+                  isAdmin={isAdmin}
                   onConfirm={(c) => {
-                    setPwModal(c);
-                    setPassword("");
+                    if (isAdmin) {
+                      doApply(c, "");
+                    } else {
+                      setPwModal(c);
+                      setPassword("");
+                    }
                   }}
                 />
               );

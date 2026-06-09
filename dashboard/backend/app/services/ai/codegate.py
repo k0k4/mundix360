@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config import settings
-from . import config_store, safety
+from . import config_store, safety, tickets
 
 # pending change_id -> change dict
 _PENDING: dict[str, dict[str, Any]] = {}
@@ -135,19 +135,13 @@ def _rate_limited() -> bool:
     return len(_FAILS) >= _MAX_FAILS
 
 
-def confirm(change_id: str, password: str) -> dict[str, Any]:
-    """Verify the master password and apply the pending change. Raises on failure."""
-    if _rate_limited():
-        raise PermissionError("muitas tentativas; tente novamente em alguns minutos")
-    if not config_store.master_password_set():
-        raise PermissionError(
-            "Senha mestra não configurada — defina-a em Mundix AI → Configuração "
-            "(ou MUNDIX_AI_MASTER_PASSWORD no .env) para habilitar a edição de código"
-        )
-    if not safety.password_ok(password):
-        _FAILS.append(time.time())
-        raise PermissionError("senha master incorreta")
+def apply_change(change_id: str, *, actor: str = "operator",
+                 conversation_id: str | None = None) -> dict[str, Any]:
+    """Write + commit a pending change WITHOUT a master password.
 
+    The caller must already be authorized (an ``admin`` session, per product
+    policy). All path-safety guards still apply, and every applied change is
+    recorded as a chamado (ticket) for transparency. Raises on failure."""
     change = _PENDING.get(change_id)
     if not change:
         raise KeyError("mudança pendente não encontrada ou expirada")
@@ -163,12 +157,43 @@ def confirm(change_id: str, password: str) -> dict[str, Any]:
 
     commit = _git_commit(real, change["description"])
     _PENDING.pop(change_id, None)
+
+    ticket = tickets.record_code_change(
+        path=change["display_path"],
+        description=change["description"],
+        actor=actor,
+        action="create" if not change.get("exists") else "edit",
+        commit=commit.get("ref"),
+        committed=commit.get("ok", False),
+        conversation_id=conversation_id,
+    )
     return {
         "ok": True,
         "path": change["display_path"],
         "committed": commit.get("ok", False),
         "commit": commit.get("ref"),
+        "ticket": ticket["id"],
     }
+
+
+def confirm(change_id: str, password: str, *, actor: str = "operator",
+            conversation_id: str | None = None) -> dict[str, Any]:
+    """Verify the master password and apply the pending change. Raises on failure.
+
+    Used for non-admin operators: applying code still requires the master
+    password. Admins apply directly via ``apply_change``."""
+    if _rate_limited():
+        raise PermissionError("muitas tentativas; tente novamente em alguns minutos")
+    if not config_store.master_password_set():
+        raise PermissionError(
+            "Senha mestra não configurada — defina-a em Mundix AI → Configuração "
+            "(ou MUNDIX_AI_MASTER_PASSWORD no .env) para habilitar a edição de código"
+        )
+    if not safety.password_ok(password):
+        _FAILS.append(time.time())
+        raise PermissionError("senha master incorreta")
+
+    return apply_change(change_id, actor=actor, conversation_id=conversation_id)
 
 
 def _git_commit(path: str, description: str) -> dict[str, Any]:

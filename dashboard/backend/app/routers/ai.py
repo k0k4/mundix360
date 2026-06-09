@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..services.ai import agent, codegate, config_store, memory, livingmemory
+from ..services.ai import tickets as _tickets
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -31,7 +32,8 @@ class FactIn(BaseModel):
 
 class ConfirmIn(BaseModel):
     change_id: str
-    password: str
+    password: str = ""
+    conversation_id: str | None = None
 
 
 class ConfigIn(BaseModel):
@@ -232,20 +234,39 @@ def pending_changes():
 
 @router.post("/code-change/confirm")
 def confirm_change(body: ConfirmIn, request: Request):
+    user = getattr(request.state, "user", None) or {}
+    role = user.get("role")
+    actor = user.get("username") or (request.client.host if request.client else "unknown")
     try:
-        result = codegate.confirm(body.change_id, body.password)
+        # Admins apply code changes directly; other operators must supply the
+        # master password. Path-safety guards apply in both paths.
+        if role == "admin":
+            result = codegate.apply_change(
+                body.change_id, actor=actor, conversation_id=body.conversation_id)
+        else:
+            result = codegate.confirm(
+                body.change_id, body.password, actor=actor,
+                conversation_id=body.conversation_id)
     except PermissionError as e:
         memory.audit("code_change_confirm", {"change_id": body.change_id}, "denied",
-                     str(e), actor=request.client.host if request.client else "unknown")
+                     str(e), actor=actor)
         raise HTTPException(status_code=403, detail=str(e))
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    memory.audit("code_change_confirm", {"change_id": body.change_id, "path": result["path"]},
+    memory.audit("code_change_confirm",
+                 {"change_id": body.change_id, "path": result["path"],
+                  "ticket": result.get("ticket"), "via": "admin" if role == "admin" else "password"},
                  "ok", f"committed={result.get('committed')} {result.get('commit')}",
-                 actor=request.client.host if request.client else "unknown")
+                 actor=actor)
     return result
+
+
+@router.get("/tickets")
+def list_tickets(limit: int = 50):
+    """Chamados (alterações de código aplicadas) — trilha transparente."""
+    return {"tickets": _tickets.list_tickets(limit)}
 
 
 # --- AI configuration ------------------------------------------------------

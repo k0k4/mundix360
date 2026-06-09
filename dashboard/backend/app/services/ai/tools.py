@@ -336,6 +336,21 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "list_tickets",
+            "description": (
+                "Lista os chamados (alterações de código que você aplicou): caminho, "
+                "descrição, autor, commit e data. Use para acompanhar o que já foi mudado "
+                "no sistema e dar continuidade de forma transparente."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer"}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_journal",
             "description": "Lê as mensagens recentes do mural/diário compartilhado.",
             "parameters": {
@@ -739,6 +754,9 @@ def _do_dispatch(name: str, a: dict[str, Any], cid: str | None) -> dict[str, Any
         return {"ok": True, "id": entry["id"]}
     if name == "read_journal":
         return {"entries": livingmemory.recent(min(int(a.get("limit", 20)), 100))}
+    if name == "list_tickets":
+        from . import tickets as _tk
+        return {"tickets": _tk.list_tickets(min(int(a.get("limit", 50)), 200))}
     if name == "threat_intel_status":
         return threatintel.overview()
     if name == "threat_intel_update":
