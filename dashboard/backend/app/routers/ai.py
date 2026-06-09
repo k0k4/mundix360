@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from ..services.ai import agent, codegate, config_store, memory, livingmemory
 from ..services.ai import tickets as _tickets
+from ..services.ai import deploy as _deploy
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -267,6 +268,12 @@ def confirm_change(body: ConfirmIn, request: Request):
 def list_tickets(limit: int = 50):
     """Chamados (alterações de código aplicadas) — trilha transparente."""
     return {"tickets": _tickets.list_tickets(limit)}
+
+
+@router.get("/deploy-status")
+def deploy_status():
+    """Status da ativação da última mudança (rebuild do frontend / restart da API)."""
+    return _deploy.status()
 
 
 # --- AI configuration ------------------------------------------------------

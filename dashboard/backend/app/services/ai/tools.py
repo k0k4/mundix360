@@ -336,6 +336,19 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "deploy_status",
+            "description": (
+                "Mostra o status da ATIVAÇÃO da última mudança de código: rebuild da "
+                "interface (frontend) ou restart da API (backend). Use após aplicar uma "
+                "mudança para confirmar se já entrou no ar (status ok) ou ainda está "
+                "compilando/reiniciando (building/restarting) ou falhou (failed + log)."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_tickets",
             "description": (
                 "Lista os chamados (alterações de código que você aplicou): caminho, "
@@ -757,6 +770,9 @@ def _do_dispatch(name: str, a: dict[str, Any], cid: str | None) -> dict[str, Any
     if name == "list_tickets":
         from . import tickets as _tk
         return {"tickets": _tk.list_tickets(min(int(a.get("limit", 50)), 200))}
+    if name == "deploy_status":
+        from . import deploy as _dp
+        return _dp.status()
     if name == "threat_intel_status":
         return threatintel.overview()
     if name == "threat_intel_update":

@@ -239,6 +239,9 @@ export function AssistantChat({
   const [confirming, setConfirming] = useState(false);
   const { data: identity } = useGetIdentity<Identity>();
   const isAdmin = identity?.role === "admin";
+  const [deploy, setDeploy] = useState<{ kind?: string; status?: string } | null>(
+    null,
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const lastUserRef = useRef<string>("");
@@ -447,6 +450,42 @@ export function AssistantChat({
     if (!streaming && lastUserRef.current) send(lastUserRef.current);
   };
 
+  const pollDeploy = useCallback(() => {
+    setDeploy({ kind: "frontend", status: "building" });
+    let tries = 0;
+    const tick = async () => {
+      tries++;
+      try {
+        const r = await fetch("/api/ai/deploy-status", {
+          headers: { ...authHeaders() },
+        });
+        if (r.ok) {
+          const s = await r.json();
+          setDeploy(s);
+          if (s.status === "ok") {
+            antdMessage.success(
+              "Interface recompilada — recarregue a página (Ctrl+F5) para ver as mudanças.",
+              10,
+            );
+            return;
+          }
+          if (s.status === "failed") {
+            antdMessage.error(
+              "Falha ao recompilar a interface. Peça à IA para revisar o erro.",
+              10,
+            );
+            return;
+          }
+        }
+      } catch {
+        /* keep polling */
+      }
+      if (tries < 150) setTimeout(tick, 4000);
+      else setDeploy(null);
+    };
+    setTimeout(tick, 4000);
+  }, []);
+
   const doApply = async (change: CodeChange, pw: string) => {
     setConfirming(true);
     try {
@@ -471,11 +510,20 @@ export function AssistantChat({
         return;
       }
       const j = await r.json();
-      antdMessage.success(
-        `Alteração aplicada${j.commit ? ` (${j.commit.slice(0, 8)})` : ""}${
-          j.ticket ? ` · chamado ${j.ticket}` : ""
-        }.`,
-      );
+      const act = j.activation || {};
+      const base = `Alteração aplicada${
+        j.commit ? ` (${j.commit.slice(0, 8)})` : ""
+      }${j.ticket ? ` · chamado ${j.ticket}` : ""}`;
+      if (act.kind === "frontend") {
+        antdMessage.success(`${base}. Recompilando a interface (~minutos)…`, 6);
+        pollDeploy();
+      } else if (act.kind === "backend") {
+        antdMessage.success(`${base}. Reiniciando a API…`, 6);
+        setDeploy({ kind: "backend", status: "restarting" });
+        setTimeout(() => setDeploy(null), 20000);
+      } else {
+        antdMessage.success(`${base}.`);
+      }
       setItems((prev) =>
         prev.map((it) =>
           it.kind === "code" && it.id === change.id
@@ -679,6 +727,28 @@ export function AssistantChat({
           background: "#0e1830",
         }}
       >
+        {deploy &&
+          (deploy.status === "building" || deploy.status === "restarting") && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 8,
+                padding: "6px 10px",
+                borderRadius: 6,
+                background: "#172554",
+                border: "1px solid #1e40af",
+              }}
+            >
+              <Spin size="small" />
+              <Text style={{ color: "#bfdbfe", fontSize: 12 }}>
+                {deploy.kind === "backend"
+                  ? "Reiniciando a API para ativar a mudança…"
+                  : "Recompilando a interface — pode levar alguns minutos. A tela atualiza ao concluir (recarregue a página)."}
+              </Text>
+            </div>
+          )}
         {context && (
           <Tag
             color="blue"

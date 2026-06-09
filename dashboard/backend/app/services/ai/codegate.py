@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config import settings
-from . import config_store, safety, tickets
+from . import config_store, safety, tickets, deploy
 
 # pending change_id -> change dict
 _PENDING: dict[str, dict[str, Any]] = {}
@@ -167,12 +167,16 @@ def apply_change(change_id: str, *, actor: str = "operator",
         committed=commit.get("ok", False),
         conversation_id=conversation_id,
     )
+    # Activate the change so it actually takes effect on the live appliance:
+    # frontend edits rebuild dist/, backend edits restart the API.
+    activation = deploy.activate(change["display_path"])
     return {
         "ok": True,
         "path": change["display_path"],
         "committed": commit.get("ok", False),
         "commit": commit.get("ref"),
         "ticket": ticket["id"],
+        "activation": activation,
     }
 
 
