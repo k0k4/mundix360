@@ -353,11 +353,11 @@ body {
   letter-spacing: 0.2px;
 }
 .mx-kpi-value {
-  font-size: 30px;
-  font-weight: 750;
-  line-height: 1.1;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
   color: var(--mx-text);
-  letter-spacing: -0.5px;
+  letter-spacing: -0.3px;
 }
 .mx-trend {
   display: inline-flex;
