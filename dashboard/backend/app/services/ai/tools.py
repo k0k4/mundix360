@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import ipaddress
+import os
 import subprocess
 from typing import Any, Callable
 
@@ -183,8 +184,54 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "read_file",
+            "description": "Lê um arquivo de código-fonte sob /opt/mundix360 (com números de linha). Use ANTES de propor uma edição para obter o conteúdo exato. Segredos são bloqueados/redigidos.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Caminho do arquivo (relativo à raiz do projeto ou absoluto sob /opt/mundix360)"},
+                    "start": {"type": "integer", "description": "Linha inicial (1-based, opcional)"},
+                    "end": {"type": "integer", "description": "Linha final (1-based, opcional)"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_dir",
+            "description": "Lista o conteúdo de um diretório do projeto (arquivos e subpastas) sob /opt/mundix360.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Caminho do diretório (default: raiz do projeto)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_code",
+            "description": "Busca um padrão (regex/texto) nos arquivos do projeto e retorna arquivo:linha:trecho. Use para localizar onde algo está definido antes de editar.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Texto ou regex a procurar"},
+                    "path": {"type": "string", "description": "Subdiretório/arquivo onde buscar (opcional)"},
+                    "glob": {"type": "string", "description": "Filtro de nome, ex.: *.py (opcional)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_code_change",
-            "description": "Propõe alteração no código-fonte. NÃO aplica: requer o operador digitar a senha master no painel para confirmar.",
+            "description": "Propõe alteração no código-fonte enviando o conteúdo COMPLETO do arquivo (use para criar arquivos novos ou reescritas grandes). NÃO aplica: requer o operador digitar a senha master no painel. Para edições pontuais prefira propose_code_edit.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -193,6 +240,23 @@ TOOLS: list[dict[str, Any]] = [
                     "description": {"type": "string", "description": "Resumo da mudança (vira mensagem de commit)"},
                 },
                 "required": ["path", "new_content", "description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_code_edit",
+            "description": "Propõe uma edição PONTUAL substituindo um trecho exato e único do arquivo (find→replace), sem reenviar o arquivo todo. Mais fácil/barato. NÃO aplica: requer a senha master do operador no painel.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Caminho do arquivo existente (sob /opt/mundix360)"},
+                    "find": {"type": "string", "description": "Trecho EXATO a localizar (deve ser único no arquivo; inclua contexto suficiente)"},
+                    "replace": {"type": "string", "description": "Texto que substituirá o trecho 'find'"},
+                    "description": {"type": "string", "description": "Resumo da mudança (vira mensagem de commit)"},
+                },
+                "required": ["path", "find", "replace", "description"],
             },
         },
     },
@@ -329,7 +393,7 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 # Tools that may pause the agent loop awaiting out-of-band user action.
-SPECIAL_TOOLS = {"propose_code_change"}
+SPECIAL_TOOLS = {"propose_code_change", "propose_code_edit"}
 
 # name -> {"required": [...], "props": {...}} built once from the tool schemas so
 # dispatch can validate arguments and return a helpful, model-correctable error
@@ -372,6 +436,91 @@ def _truncate(s: str) -> str:
     return s
 
 
+def _read_file(path: str, start: int | None = None, end: int | None = None) -> dict[str, Any]:
+    if not safety.in_editable_root(path):
+        return {"error": "caminho fora da raiz editável do projeto"}
+    if safety.is_secret_path(path):
+        return {"blocked": True, "error": "arquivo de segredo — leitura não permitida"}
+    real = safety.resolve_in_root(path)
+    if not os.path.isfile(real):
+        return {"error": f"arquivo não encontrado: {path}"}
+    if real.endswith((".db", ".sqlite", ".png", ".jpg", ".jpeg", ".gz", ".zip", ".lock")):
+        return {"error": "tipo de arquivo binário/não legível"}
+    try:
+        if os.path.getsize(real) > 512_000:
+            return {"error": "arquivo muito grande (>500KB); leia um intervalo com start/end"}
+        with open(real, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError as e:
+        return {"error": safety.redact(str(e))}
+    total = len(lines)
+    s = max(1, int(start)) if start else 1
+    e = min(total, int(end)) if end else total
+    sliced = lines[s - 1:e]
+    numbered = "".join(f"{i}\t{ln}" for i, ln in enumerate(sliced, start=s))
+    return {
+        "path": path,
+        "total_lines": total,
+        "start": s,
+        "end": e,
+        "content": _truncate(safety.redact(numbered)),
+    }
+
+
+def _list_dir(path: str | None) -> dict[str, Any]:
+    target = path or settings.ai_editable_root
+    if not safety.in_editable_root(target):
+        return {"error": "caminho fora da raiz editável do projeto"}
+    real = safety.resolve_in_root(target)
+    if not os.path.isdir(real):
+        return {"error": f"diretório não encontrado: {target}"}
+    try:
+        names = sorted(os.listdir(real))
+    except OSError as e:
+        return {"error": safety.redact(str(e))}
+    entries = []
+    for n in names:
+        if n in (".git", "__pycache__", "node_modules") or n.startswith("."):
+            continue
+        full = os.path.join(real, n)
+        is_dir = os.path.isdir(full)
+        try:
+            size = os.path.getsize(full) if not is_dir else None
+        except OSError:
+            size = None
+        entries.append({"name": n + ("/" if is_dir else ""), "dir": is_dir, "size": size})
+    rel = os.path.relpath(real, settings.ai_editable_root)
+    return {"path": "." if rel == "." else rel, "count": len(entries), "entries": entries}
+
+
+def _search_code(query: str, path: str | None, glob: str | None) -> dict[str, Any]:
+    base = path or settings.ai_editable_root
+    if not safety.in_editable_root(base):
+        return {"error": "caminho fora da raiz editável do projeto"}
+    real = safety.resolve_in_root(base)
+    if not os.path.exists(real):
+        return {"error": f"caminho não encontrado: {base}"}
+    cmd = ["grep", "-rInE", "--max-count=5",
+           "--exclude-dir=.git", "--exclude-dir=__pycache__",
+           "--exclude-dir=node_modules", "--exclude-dir=dist",
+           "--exclude=*.db", "--exclude=*.sqlite", "--exclude=*.env"]
+    if glob:
+        cmd.append(f"--include={glob}")
+    cmd.extend(["--", query, real])
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout (20s) na busca"}
+    out_lines = [ln for ln in (r.stdout or "").splitlines() if not safety.is_secret_path(ln.split(":", 1)[0])]
+    out_lines = out_lines[:80]
+    rel_lines = [ln.replace(settings.ai_editable_root + "/", "") for ln in out_lines]
+    return {
+        "query": query,
+        "matches": len(rel_lines),
+        "results": _truncate(safety.redact("\n".join(rel_lines)) or "(nenhum resultado)"),
+    }
+
+
 def _run_shell(command: str) -> dict[str, Any]:
     reason = safety.shell_precheck(command)
     if reason:
@@ -402,6 +551,10 @@ def _audit_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
         # Never store full source content in the audit log.
         if "new_content" in safe:
             safe["new_content"] = f"<{len(str(safe['new_content']))} chars omitidos>"
+    if name == "propose_code_edit":
+        for k in ("find", "replace"):
+            if k in safe:
+                safe[k] = f"<{len(str(safe[k]))} chars omitidos>"
     return safe
 
 
@@ -539,6 +692,12 @@ def _do_dispatch(name: str, a: dict[str, Any], cid: str | None) -> dict[str, Any
         }
     if name == "run_shell":
         return _run_shell(a["command"])
+    if name == "read_file":
+        return _read_file(a["path"], a.get("start"), a.get("end"))
+    if name == "list_dir":
+        return _list_dir(a.get("path"))
+    if name == "search_code":
+        return _search_code(a["query"], a.get("path"), a.get("glob"))
     if name == "propose_code_change":
         info = codegate.propose(a["path"], a["new_content"], a["description"])
         return {
@@ -546,6 +705,17 @@ def _do_dispatch(name: str, a: dict[str, Any], cid: str | None) -> dict[str, Any
             "pending": True,
             "message": (
                 f"Mudança proposta em {info['path']}. Aguardando o operador inserir a "
+                f"senha master no painel para aplicar. NÃO está aplicada ainda."
+            ),
+            "change_id": info["id"],
+        }
+    if name == "propose_code_edit":
+        info = codegate.propose_edit(a["path"], a["find"], a["replace"], a["description"])
+        return {
+            "_event": {"type": "code_change_pending", "data": info},
+            "pending": True,
+            "message": (
+                f"Edição proposta em {info['path']}. Aguardando o operador inserir a "
                 f"senha master no painel para aplicar. NÃO está aplicada ainda."
             ),
             "change_id": info["id"],

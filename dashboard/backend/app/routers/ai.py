@@ -1,6 +1,8 @@
 """AI assistant API: streaming chat, conversations, memory, audit, code-gate."""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -8,6 +10,12 @@ from pydantic import BaseModel
 from ..services.ai import agent, codegate, config_store, memory, livingmemory
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+# Seconds of silence after which we emit an SSE comment heartbeat, so reverse
+# proxies (nginx) and the browser don't drop an idle connection while the model
+# is "thinking" or a slow tool runs. SSE comment lines (":") are ignored by the
+# client parser, so they never appear in the transcript.
+_HEARTBEAT_SECONDS = 15.0
 
 
 class ChatIn(BaseModel):
@@ -59,8 +67,39 @@ async def chat_stream(body: ChatIn):
     async def gen():
         # tell the client which conversation this is (esp. for new ones)
         yield f"event: meta\ndata: {{\"conversation_id\": \"{cid}\"}}\n\n"
-        async for sse in agent.run(cid, body.message, context=body.context):
-            yield sse
+
+        # Pump the agent's SSE strings through a queue so we can interleave
+        # heartbeat comments during idle gaps (model thinking / slow tools)
+        # without blocking on the agent generator.
+        queue: asyncio.Queue = asyncio.Queue()
+        _DONE = object()
+
+        async def pump():
+            try:
+                async for sse in agent.run(cid, body.message, context=body.context):
+                    await queue.put(sse)
+            except Exception as e:  # never wedge the stream on an agent crash
+                from ..services.ai import safety
+                msg = safety.redact(str(e)) or "erro no agente"
+                await queue.put(f"event: error\ndata: {{\"message\": \"{msg}\"}}\n\n")
+                await queue.put("event: done\ndata: {}\n\n")
+            finally:
+                await queue.put(_DONE)
+
+        task = asyncio.create_task(pump())
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"  # SSE comment keepalive
+                    continue
+                if item is _DONE:
+                    break
+                yield item
+        finally:
+            if not task.done():
+                task.cancel()
 
     return StreamingResponse(
         gen(),
@@ -78,6 +117,18 @@ def conversations():
 @router.post("/conversations")
 def new_conversation():
     return memory.create_conversation()
+
+
+class RenameIn(BaseModel):
+    title: str
+
+
+@router.patch("/conversations/{cid}")
+def rename_conversation(cid: str, body: RenameIn):
+    conv = memory.rename_conversation(cid, body.title)
+    if not conv:
+        raise HTTPException(status_code=404, detail="conversa não encontrada ou título vazio")
+    return conv
 
 
 @router.get("/conversations/{cid}")

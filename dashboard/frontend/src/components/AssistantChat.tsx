@@ -22,7 +22,11 @@ import {
   CloseCircleOutlined,
   CodeOutlined,
   LockOutlined,
+  StopOutlined,
+  CopyOutlined,
+  RedoOutlined,
 } from "@ant-design/icons";
+import { Markdown } from "./Markdown";
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -196,6 +200,11 @@ export function AssistantChat({
   const [confirming, setConfirming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const lastUserRef = useRef<string>("");
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     setCid(conversationId ?? null);
@@ -223,6 +232,10 @@ export function AssistantChat({
         role: m.role,
         content: m.content,
       }));
+    const lastUser = [...(j.messages || [])]
+      .reverse()
+      .find((m: { role: string; content?: string }) => m.role === "user" && m.content);
+    if (lastUser?.content) lastUserRef.current = lastUser.content;
     setItems(msgs);
   }, []);
 
@@ -231,10 +244,11 @@ export function AssistantChat({
     else setItems([]);
   }, [conversationId, loadMessages]);
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (override?: string) => {
+    const text = (override ?? input).trim();
     if (!text || streaming) return;
-    setInput("");
+    if (override === undefined) setInput("");
+    lastUserRef.current = text;
     setItems((prev) => [...prev, { kind: "text", role: "user", content: text }]);
     setStreaming(true);
 
@@ -369,6 +383,10 @@ export function AssistantChat({
     }
   };
 
+  const regenerate = () => {
+    if (!streaming && lastUserRef.current) send(lastUserRef.current);
+  };
+
   const confirmCodeChange = async () => {
     if (!pwModal) return;
     setConfirming(true);
@@ -456,6 +474,8 @@ export function AssistantChat({
                 />
               );
             const isUser = it.role === "user";
+            const isLastAssistant =
+              !isUser && idx === items.length - 1 && !streaming;
             return (
               <div
                 key={idx}
@@ -482,15 +502,52 @@ export function AssistantChat({
                     padding: "8px 14px",
                   }}
                 >
-                  <Paragraph
-                    style={{
-                      margin: 0,
-                      color: "#e2e8f0",
-                      whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {it.content || (streaming ? "…" : "")}
-                  </Paragraph>
+                  {isUser ? (
+                    <Paragraph
+                      style={{
+                        margin: 0,
+                        color: "#e2e8f0",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {it.content}
+                    </Paragraph>
+                  ) : it.content ? (
+                    <Markdown content={it.content} />
+                  ) : (
+                    <Text style={{ color: "#94a3b8" }}>
+                      {streaming ? "…" : ""}
+                    </Text>
+                  )}
+                  {!isUser && it.content && (
+                    <Space size={4} style={{ marginTop: 6 }}>
+                      <Tooltip title="Copiar">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<CopyOutlined />}
+                          style={{ color: "#64748b" }}
+                          onClick={() => {
+                            navigator.clipboard
+                              ?.writeText(it.content)
+                              .then(() => antdMessage.success("Copiado"))
+                              .catch(() => {});
+                          }}
+                        />
+                      </Tooltip>
+                      {isLastAssistant && (
+                        <Tooltip title="Perguntar de novo">
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<RedoOutlined />}
+                            style={{ color: "#64748b" }}
+                            onClick={regenerate}
+                          />
+                        </Tooltip>
+                      )}
+                    </Space>
+                  )}
                 </div>
               </div>
             );
@@ -528,15 +585,25 @@ export function AssistantChat({
             disabled={streaming}
             style={{ background: "#0b1220" }}
           />
-          <Tooltip title="Enviar (Enter)">
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              loading={streaming}
-              onClick={send}
-              style={{ height: "auto" }}
-            />
-          </Tooltip>
+          {streaming ? (
+            <Tooltip title="Parar">
+              <Button
+                danger
+                icon={<StopOutlined />}
+                onClick={stop}
+                style={{ height: "auto" }}
+              />
+            </Tooltip>
+          ) : (
+            <Tooltip title="Enviar (Enter)">
+              <Button
+                type="primary"
+                icon={<SendOutlined />}
+                onClick={() => send()}
+                style={{ height: "auto" }}
+              />
+            </Tooltip>
+          )}
         </Space.Compact>
       </div>
 

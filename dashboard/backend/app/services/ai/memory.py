@@ -127,7 +127,29 @@ def list_conversations(limit: int = 100) -> list[dict[str, Any]]:
         rows = con.execute(
             "SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?", (limit,)
         ).fetchall()
-    return [dict(r) for r in rows]
+        convs = [dict(r) for r in rows]
+        for c in convs:
+            prev = con.execute(
+                "SELECT content FROM messages WHERE conversation_id=? AND content IS NOT NULL "
+                "AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 1",
+                (c["id"],),
+            ).fetchone()
+            c["preview"] = (prev["content"][:120] if prev and prev["content"] else "")
+    return convs
+
+
+def rename_conversation(cid: str, title: str) -> dict[str, Any] | None:
+    title = (title or "").strip()[:120]
+    if not title:
+        return None
+    with _conn() as con:
+        cur = con.execute(
+            "UPDATE conversations SET title=?, updated_at=? WHERE id=?",
+            (title, _now(), cid),
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_conversation(cid)
 
 
 def get_conversation(cid: str) -> dict[str, Any] | None:

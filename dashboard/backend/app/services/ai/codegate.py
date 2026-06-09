@@ -26,8 +26,9 @@ _MAX_FAILS = 5
 _WINDOW = 300.0  # seconds
 
 
-def propose(path: str, new_content: str, description: str) -> dict[str, Any]:
-    """Register a pending code change and return its id + server-computed diff."""
+def _resolve_editable(path: str) -> str:
+    """Validate an AI-supplied path is an editable source file and return its
+    real absolute path. Raises ValueError on any policy violation."""
     if not safety.in_editable_root(path):
         raise ValueError("caminho fora da raiz editável do projeto")
     if safety.is_secret_path(path):
@@ -36,6 +37,45 @@ def propose(path: str, new_content: str, description: str) -> dict[str, Any]:
     # block binaries / git internals
     if "/.git/" in real or real.endswith((".db", ".sqlite", ".png", ".jpg", ".lock")):
         raise ValueError("tipo de arquivo não editável")
+    return real
+
+
+def propose_edit(path: str, find: str, replace: str, description: str) -> dict[str, Any]:
+    """Anchored edit: replace an exact unique snippet (``find``) with ``replace``
+    in an existing file, then register the resulting change like ``propose``.
+
+    This is far easier/cheaper for the model than re-emitting the whole file. We
+    require ``find`` to occur EXACTLY once so the edit is unambiguous; otherwise
+    we return a clear error the model can correct (add more surrounding context)."""
+    real = _resolve_editable(path)
+    if not os.path.isfile(real):
+        raise ValueError(
+            "arquivo não existe; use propose_code_change para criar um arquivo novo"
+        )
+    if not find:
+        raise ValueError("'find' não pode ser vazio")
+    with open(real, "r", encoding="utf-8", errors="replace") as f:
+        old = f.read()
+    occurrences = old.count(find)
+    if occurrences == 0:
+        raise ValueError(
+            "trecho 'find' não encontrado no arquivo (verifique espaços/indentação "
+            "e use o conteúdo exato; leia o arquivo com read_file antes)"
+        )
+    if occurrences > 1:
+        raise ValueError(
+            f"trecho 'find' aparece {occurrences} vezes; inclua mais contexto ao redor "
+            "para torná-lo único"
+        )
+    new_content = old.replace(find, replace, 1)
+    if new_content == old:
+        raise ValueError("a edição não altera o arquivo (find == replace)")
+    return propose(path, new_content, description)
+
+
+def propose(path: str, new_content: str, description: str) -> dict[str, Any]:
+    """Register a pending code change and return its id + server-computed diff."""
+    real = _resolve_editable(path)
 
     old = ""
     exists = os.path.isfile(real)

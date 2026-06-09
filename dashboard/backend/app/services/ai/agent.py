@@ -9,6 +9,7 @@ Design decisions (per security review):
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
 import time
 import json
@@ -49,6 +50,12 @@ _STUCK_REPEATS = 4
 # while always producing *different* output (so the stuck guard never fires).
 # Generous on purpose: real tasks finish well under this.
 _MAX_RUN_SECONDS = 1800
+
+# Max seconds to wait for the NEXT streamed chunk from the provider before we
+# give up on a stalled connection. A half-open TCP stream (proxy/idle drop) would
+# otherwise hang the turn indefinitely even though the per-request timeout already
+# elapsed at connection level. Caught by run() -> surfaced as a clean error.
+_STREAM_IDLE_TIMEOUT = 90.0
 
 
 def client(cfg: dict[str, Any]) -> AsyncOpenAI:
@@ -182,7 +189,17 @@ async def _stream_turn(messages: list[dict[str, Any]], masker: Masker, cfg: dict
     usage = None
     pending = ""  # raw masked content not yet safe to unmask+emit
 
-    async for chunk in stream:
+    stream_iter = stream.__aiter__()
+    while True:
+        try:
+            chunk = await asyncio.wait_for(stream_iter.__anext__(), timeout=_STREAM_IDLE_TIMEOUT)
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                "o provedor parou de responder (sem dados por "
+                f"{int(_STREAM_IDLE_TIMEOUT)}s); conexão interrompida"
+            )
         if chunk.usage:
             usage = {
                 "prompt": chunk.usage.prompt_tokens,
