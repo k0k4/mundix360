@@ -276,32 +276,33 @@ phase_mgmt() {
       -subj "/CN=$(hostname -s 2>/dev/null || echo mundix)" >>"$LOG" 2>&1 \
       || warn "openssl falhou ao gerar o certificado."
   fi
-  # Publica em 0.0.0.0:80/443 (proxy para o WAF em 127.0.0.1:8099). Assim o
-  # painel é alcançável em QUALQUER IP da caixa, sem depender de detectar a NIC.
+  # Acesso ao painel EXCLUSIVAMENTE por HTTPS. A porta 80 NÃO faz proxy — só um
+  # redirect 301 para https (redirect puro = impossível criar loop). A porta 443
+  # termina o TLS e faz o proxy para o WAF interno (127.0.0.1:8099). Publicado em
+  # 0.0.0.0, então o painel é alcançável em QUALQUER IP da caixa.
   cat > /etc/nginx/conf.d/mundix-mgmt.conf <<'NGINX'
-# Mundix Security 360 — listener de gestão (todas as interfaces).
-# Proxy para o reverse-proxy WAF interno (127.0.0.1:8099).
+# Mundix Security 360 — listener de gestão (HTTPS exclusivo, todas as interfaces).
+
+# HTTP (80): redirect 301 puro para HTTPS — sem proxy, sem loop possível.
 server {
     listen 0.0.0.0:80 default_server;
     listen [::]:80 default_server;
     server_name _;
-    # Redireciona HTTP -> HTTPS, mas mantém o painel utilizável em HTTP também.
-    location / {
-        proxy_pass http://127.0.0.1:8099;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto http;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-    }
+    return 301 https://$host$request_uri;
 }
+
+# HTTPS (443): único ponto de acesso ao painel.
 server {
     listen 0.0.0.0:443 ssl default_server;
     listen [::]:443 ssl default_server;
     server_name _;
     ssl_certificate     /etc/mundix/mgmt.crt;
     ssl_certificate_key /etc/mundix/mgmt.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Força o navegador a sempre usar HTTPS neste host (2 anos).
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
     location / {
         proxy_pass http://127.0.0.1:8099;
         proxy_set_header Host $host;
