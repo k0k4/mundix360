@@ -160,6 +160,21 @@ def validate_domain(d: str) -> bool:
     return bool(_DOMAIN_RE.match(d))
 
 
+def normalize_domain(d: str) -> str | None:
+    """Canonicalise a user-entered domain for the content filter.
+
+    dnsmasq matches ``server=/dominio/#`` (and ``address=/dominio/...``) against
+    the domain *and every subdomain*, so an explicit wildcard such as
+    ``*.sefaz.ma.gov.br`` is equivalent to the bare base domain. Accept and strip
+    a leading ``*.`` / ``.`` wildcard prefix instead of rejecting it as invalid;
+    return the canonical domain, or ``None`` when it is genuinely malformed."""
+    d = (d or "").strip().lower().rstrip(".")
+    while d.startswith("*."):
+        d = d[2:]
+    d = d.lstrip(".")
+    return d if _DOMAIN_RE.match(d) else None
+
+
 def _cat_path(cid: str) -> str:
     if not _valid_id(cid):
         raise ValueError(f"id de categoria inválido: {cid}")
@@ -460,10 +475,10 @@ def get_allowlist() -> list[str]:
 def set_allowlist(domains: list[str]) -> dict:
     clean = []
     for d in domains:
-        d = d.strip().lower().rstrip(".")
-        if not validate_domain(d):
+        nd = normalize_domain(d)
+        if not nd:
             raise ValueError(f"domínio inválido: {d}")
-        clean.append(d)
+        clean.append(nd)
     clean = sorted(set(clean))
     allow = set(clean)
     model = load_model()

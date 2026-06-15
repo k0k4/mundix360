@@ -235,8 +235,9 @@ function ManualTab() {
         onCancel={() => setOpen(false)} okText="Bloquear">
         <Form form={form} layout="vertical">
           <Form.Item name="domain" label="Domínio"
+            extra="Inclui automaticamente subdomínios. O curinga *. é opcional."
             rules={[{ required: true, message: "Informe o domínio" }]}>
-            <Input placeholder="exemplo.com" className="mx-mono" />
+            <Input placeholder="exemplo.com ou *.exemplo.com" className="mx-mono" />
           </Form.Item>
           <Form.Item name="note" label="Nota / categoria">
             <Input placeholder="malware, adulto, ..." />
@@ -276,7 +277,10 @@ function AllowlistTab() {
   };
 
   const add = () => form.validateFields().then((v) => {
-    save([...new Set([...domains, v.domain.trim().toLowerCase()])]);
+    // dnsmasq matches server=/dominio/# against the domain and every subdomain,
+    // so a "*." wildcard prefix is redundant — strip it for a clean canonical entry.
+    const d = v.domain.trim().toLowerCase().replace(/^(\*\.)+/, "").replace(/^\.+/, "");
+    save([...new Set([...domains, d])]);
     setOpen(false); form.resetFields();
   });
 
@@ -285,7 +289,7 @@ function AllowlistTab() {
       {ctx}
       <Alert type="info" showIcon style={{ marginBottom: 16 }}
         message="Exceções sobrepõem qualquer bloqueio"
-        description="Domínios aqui resolvem normalmente mesmo que estejam em uma categoria bloqueada (via server=/dominio/#)." />
+        description="Domínios aqui resolvem normalmente mesmo que estejam em uma categoria bloqueada (via server=/dominio/#). A exceção já cobre o domínio e todos os subdomínios/CNAMEs — ex.: sefaz.ma.gov.br também libera www.sefaz.ma.gov.br. O prefixo curinga *. é aceito e opcional." />
       <Space style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
           Adicionar exceção
@@ -309,8 +313,9 @@ function AllowlistTab() {
         onCancel={() => setOpen(false)} okText="Adicionar">
         <Form form={form} layout="vertical">
           <Form.Item name="domain" label="Domínio"
+            extra="Inclui automaticamente subdomínios e CNAMEs. O curinga *. é opcional."
             rules={[{ required: true, message: "Informe o domínio" }]}>
-            <Input placeholder="site-permitido.com" className="mx-mono" />
+            <Input placeholder="sefaz.ma.gov.br ou *.sefaz.ma.gov.br" className="mx-mono" />
           </Form.Item>
         </Form>
       </Modal>

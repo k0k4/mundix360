@@ -30,6 +30,12 @@ ZONE_INTERFACES = {
 RESERVATIONS_FILE = "mundix-dhcp-reservations.conf"
 ZONE_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,30}$")
 
+# Files in /etc/dnsmasq.d that are never DHCP zones. Content-filter blocklists
+# (managed by contentcat) share this directory and can be tens of MB; parsing
+# them as zones made zone discovery take ~10s/call.
+_NON_ZONE_PREFIXES = ("mundix-cat-", "mundix-content-")
+_MAX_ZONE_CONF_BYTES = 256 * 1024  # a real zone config is tiny; anything bigger isn't one
+
 
 def _parse_dnsmasq_conf(path: str) -> dict[str, Any]:
     conf: dict[str, Any] = {"raw": {}, "dhcp_range": None, "servers": [], "options": {}}
@@ -120,7 +126,20 @@ def _discover_zone_files() -> list[str]:
             name = fn[:-5]
             if name in ("00-global", RESERVATIONS_FILE[:-5]):
                 continue
-            conf = _parse_dnsmasq_conf(os.path.join(d, fn))
+            # Content-filter blocklists (mundix-cat-*, mundix-content-*) also live
+            # here and can be tens of MB; they are never zones. Skip them by name,
+            # and guard by size, so a huge file is never parsed line-by-line on the
+            # CPU-constrained appliance (this otherwise made list_zones() take ~10s,
+            # which in turn stalled the DHCP leases/pools screen).
+            if name.startswith(_NON_ZONE_PREFIXES):
+                continue
+            path = os.path.join(d, fn)
+            try:
+                if os.path.getsize(path) > _MAX_ZONE_CONF_BYTES:
+                    continue
+            except OSError:
+                continue
+            conf = _parse_dnsmasq_conf(path)
             if conf["raw"].get("interface") and name not in names:
                 names.append(name)
     return names
@@ -397,6 +416,7 @@ def dhcp_leases() -> list[dict[str, Any]]:
     if not os.path.isfile(path):
         return leases
     neigh = _neighbors()
+    zones = list_zones()  # fetch once; resolving per-lease would re-parse configs
     reserved_macs = {i["mac"].lower() for i in list_reservations()}
     with open(path) as f:
         for line in f:
@@ -404,7 +424,7 @@ def dhcp_leases() -> list[dict[str, Any]]:
             if not m:
                 continue
             expiry, mac, ip, hostname, client_id = m.groups()
-            zone = _zone_for_ip(ip)
+            zone = _zone_for_ip(ip, zones)
             n = neigh.get(ip, {})
             # Strong match only when the neighbour MAC agrees with the lease MAC.
             n_state = n.get("state") if (not n.get("mac") or n.get("mac", "").lower() == mac.lower()) else None
@@ -476,13 +496,14 @@ def dhcp_pools() -> list[dict[str, Any]]:
     return pools
 
 
-def _zone_for_ip(ip: str) -> str | None:
-    """Map an IP to a zone using the live zone subnets (adaptive, never hardcoded)."""
+def _zone_for_ip(ip: str, zones: list[dict[str, Any]] | None = None) -> str | None:
+    """Map an IP to a zone using the live zone subnets (adaptive, never hardcoded).
+    Pass a pre-fetched ``zones`` list to avoid re-discovering zones per call."""
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return None
-    for z in list_zones():
+    for z in (zones if zones is not None else list_zones()):
         net = z.get("network")
         if not net:
             continue

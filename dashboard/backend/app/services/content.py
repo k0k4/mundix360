@@ -30,6 +30,19 @@ def validate_domain(domain: str) -> bool:
     return bool(_DOMAIN_RE.match(domain.strip().lower()))
 
 
+def normalize_domain(domain: str) -> str | None:
+    """Canonicalise a user-entered domain. ``address=/dominio/0.0.0.0`` blocks the
+    domain *and every subdomain* in dnsmasq, so an explicit wildcard such as
+    ``*.sefaz.ma.gov.br`` is equivalent to the bare base domain — accept and strip
+    the wildcard prefix instead of rejecting it. Returns the canonical domain, or
+    ``None`` when it is genuinely malformed."""
+    d = (domain or "").strip().lower().rstrip(".")
+    while d.startswith("*."):
+        d = d[2:]
+    d = d.lstrip(".")
+    return d if _DOMAIN_RE.match(d) else None
+
+
 def list_blocked_domains() -> list[dict[str, str]]:
     path = settings.content_blocklist_file
     out: list[dict[str, str]] = []
@@ -58,9 +71,10 @@ def _write(domains: dict[str, str]) -> None:
 
 
 def add_domain(domain: str, note: str = "") -> dict[str, object]:
-    domain = domain.strip().lower()
-    if not validate_domain(domain):
+    norm = normalize_domain(domain)
+    if not norm:
         raise ValueError(f"invalid domain: {domain}")
+    domain = norm
     with network.config_lock:
         path = settings.content_blocklist_file
         prev = None
@@ -75,7 +89,7 @@ def add_domain(domain: str, note: str = "") -> dict[str, object]:
 
 
 def remove_domain(domain: str) -> dict[str, object]:
-    domain = domain.strip().lower()
+    domain = normalize_domain(domain) or domain.strip().lower()
     with network.config_lock:
         path = settings.content_blocklist_file
         prev = None
