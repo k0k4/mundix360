@@ -15,23 +15,25 @@ from . import model as _m
 from . import wireguard as _wg
 from . import openvpn as _ov
 from . import fortinet as _ft
+from . import ovpnclient as _ovc
 
 
 # Aggregated nft fragment helpers consumed by fwmanage.render() — every enabled
-# VPN role contributes its firewall openings (WireGuard + OpenVPN + Fortinet).
+# VPN role contributes its firewall openings (WireGuard + OpenVPN server +
+# Fortinet client + OpenVPN client dial-out).
 def nft_input_accepts(wan: str | None = None) -> list[str]:
     return (_wg.nft_input_accepts(wan) + _ov.nft_input_accepts(wan)
-            + _ft.nft_input_accepts(wan))
+            + _ft.nft_input_accepts(wan) + _ovc.nft_input_accepts(wan))
 
 
 def nft_forward_accepts(wan: str | None = None) -> list[str]:
     return (_wg.nft_forward_accepts(wan) + _ov.nft_forward_accepts(wan)
-            + _ft.nft_forward_accepts(wan))
+            + _ft.nft_forward_accepts(wan) + _ovc.nft_forward_accepts(wan))
 
 
 def nft_postrouting_masq(wan: str | None = None) -> list[str]:
     return (_wg.nft_postrouting_masq(wan) + _ov.nft_postrouting_masq(wan)
-            + _ft.nft_postrouting_masq(wan))
+            + _ft.nft_postrouting_masq(wan) + _ovc.nft_postrouting_masq(wan))
 
 
 _lock = threading.RLock()
@@ -43,7 +45,8 @@ _SERVER_FIELDS = (
 # ---------------------------------------------------------------- status ------
 
 def get_status() -> dict[str, Any]:
-    return {"wireguard": _wg.status(), "openvpn": _ov.status(), "fortinet": _ft.status()}
+    return {"wireguard": _wg.status(), "openvpn": _ov.status(),
+            "fortinet": _ft.status(), "ovpn_clients": _ovc.status()}
 
 
 # ------------------------------------------------------- server settings ------
@@ -247,6 +250,88 @@ def openvpn_client_config(client_id: str) -> str:
         _ov.ensure_pki()
         _ov.build_client(client["cn"])
         return _ov.client_ovpn(ov, client)
+
+
+# ----------------------------------------------- OpenVPN client (dial-out) ----
+# The appliance imports a remote server's .ovpn and dials out. Multiple
+# independent connections are supported, each pinned to its own tun device.
+
+def _assign_ovpnc_dev(clients: list[dict[str, Any]], client: dict[str, Any]) -> str:
+    if client.get("dev"):
+        return client["dev"]
+    taken = {c.get("dev") for c in clients if c["id"] != client["id"]}
+    for i in range(1000):
+        cand = f"ovpnc{i}"
+        if cand not in taken:
+            return cand
+    raise ValueError("sem dispositivo tun livre para o cliente OpenVPN")
+
+
+def save_ovpn_client(data: dict[str, Any]) -> dict[str, Any]:
+    with _lock:
+        model = _m.load_model()
+        clients = model["ovpn_clients"]
+        client = _m._norm_ovpn_client(data)
+        existing = next((c for c in clients if c["id"] == client["id"]), None)
+        if existing and not client.get("config"):
+            client["config"] = existing["config"]      # keep imported profile
+        if existing and not data.get("password") and not client.get("password"):
+            client["password"] = existing.get("password", "")  # keep stored secret
+        if existing and not client.get("dev"):
+            client["dev"] = existing["dev"]             # keep the pinned device
+        client["dev"] = _assign_ovpnc_dev(clients, client)
+        client = _m._norm_ovpn_client(client)
+        _m.validate_ovpn_client(client)
+        # Stop any previous instance whose device changed, to avoid a stale tun.
+        if existing and existing.get("enabled") and existing.get("dev") != client["dev"]:
+            try:
+                _ovc.teardown(existing)
+            except Exception:
+                pass
+        model["ovpn_clients"] = [c for c in clients if c["id"] != client["id"]] + [client]
+        _m.save_model(model)
+        result = _ovc.apply_client(client)
+        st = _ovc._client_status(client)
+        st["applied"] = result["applied"]
+        st["detail"] = result["detail"]
+        return st
+
+
+def delete_ovpn_client(client_id: str) -> dict[str, Any]:
+    with _lock:
+        model = _m.load_model()
+        clients = model["ovpn_clients"]
+        client = next((c for c in clients if c["id"] == client_id), None)
+        if not client:
+            raise ValueError("conexão não encontrada")
+        try:
+            _ovc.teardown(client)
+        except Exception:
+            pass
+        model["ovpn_clients"] = [c for c in clients if c["id"] != client_id]
+        _m.save_model(model)
+        return {"deleted": client_id}
+
+
+def ovpn_client_rendered(client_id: str) -> str:
+    """Return the effective rendered config (secrets redacted) for inspection."""
+    with _lock:
+        model = _m.load_model()
+        client = next((c for c in model["ovpn_clients"] if c["id"] == client_id), None)
+        if not client:
+            raise ValueError("conexão não encontrada")
+        return _ovc.render_config(client)
+
+
+def reapply_ovpn_clients() -> None:
+    """Re-assert every enabled dial-out connection (used on startup/reconcile)."""
+    with _lock:
+        for c in _m.load_model()["ovpn_clients"]:
+            if c.get("enabled"):
+                try:
+                    _ovc.apply_client(c)
+                except Exception:
+                    pass
 
 
 # ---------------------------------------------------------- Fortinet client ---

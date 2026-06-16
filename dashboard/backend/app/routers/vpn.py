@@ -148,3 +148,34 @@ def set_fortinet(cfg: FortinetClientModel) -> dict[str, Any]:
 @router.post("/fortinet/probe-cert")
 def fortinet_probe_cert(req: FortinetProbeModel) -> dict[str, Any]:
     return _guard(vpn.fortinet_probe_cert, req.host, req.port)
+
+
+# ----------------------------------------------- OpenVPN client (dial-out) ----
+
+class OvpnClientModel(BaseModel):
+    id: Optional[str] = None
+    name: str
+    description: str = ""
+    enabled: bool = False
+    config: Optional[str] = None
+    username: str = ""
+    password: Optional[str] = None
+    route_lan: bool = False
+    remote_subnets: list[str] = Field(default_factory=list)
+    block_subnets: list[str] = Field(default_factory=list)
+    accept_pushed_routes: bool = True
+
+
+@router.post("/ovpn-clients")
+def save_ovpn_client(cfg: OvpnClientModel) -> dict[str, Any]:
+    return _guard(vpn.save_ovpn_client, cfg.model_dump(exclude_none=True))
+
+
+@router.delete("/ovpn-clients/{client_id}")
+def delete_ovpn_client(client_id: str) -> dict[str, Any]:
+    return _guard(vpn.delete_ovpn_client, client_id)
+
+
+@router.get("/ovpn-clients/{client_id}/rendered", response_class=PlainTextResponse)
+def ovpn_client_rendered(client_id: str) -> str:
+    return _guard(vpn.ovpn_client_rendered, client_id)

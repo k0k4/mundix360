@@ -28,6 +28,9 @@ _WG_IFACE_RE = re.compile(r"^wg[0-9]{1,3}$")
 _TUN_IFACE_RE = re.compile(r"^tun[0-9]{1,3}$")
 # pppd interface name pinned for the Fortinet client tunnel (e.g. ppp-forti).
 _PPP_IFACE_RE = re.compile(r"^[A-Za-z0-9_-]{1,15}$")
+# Pinned tun device for an OpenVPN *client* dial-out connection (ovpnc0..ovpnc999)
+# — kept distinct from the OpenVPN server's tun0 and safe to interpolate.
+_OVPNC_IFACE_RE = re.compile(r"^ovpnc[0-9]{1,3}$")
 # A sha256 certificate digest (hex), used to pin the FortiGate certificate.
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 # A gateway host: IPv4/IPv6 literal or DNS hostname.
@@ -59,6 +62,7 @@ def _default_model() -> dict[str, Any]:
         "wireguard": _default_wireguard(),
         "openvpn": _default_openvpn(),
         "fortinet": _default_fortinet(),
+        "ovpn_clients": [],
     }
 
 
@@ -94,6 +98,45 @@ def _norm_fortinet(f: dict[str, Any]) -> dict[str, Any]:
     base["remote_subnets"] = [
         s.strip() for s in (f.get("remote_subnets") or []) if s and s.strip()]
     return base
+
+
+# ---------------------------------------------------- openvpn client (dial-out)
+# The appliance is the *client*: it imports a remote server's `.ovpn` profile and
+# dials out (typical to reach a head-office / cloud OpenVPN server). Optionally it
+# NATs the LAN through the tunnel and the operator scopes which remote subnets are
+# reachable and which are blocked. Mirrors the Fortinet client model.
+
+def _norm_ovpn_client(c: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": c.get("id") or os.urandom(6).hex(),
+        "name": (c.get("name") or "conexao").strip(),
+        "description": (c.get("description") or "").strip(),
+        "enabled": bool(c.get("enabled", False)),
+        "config": c.get("config") or "",            # raw imported .ovpn (may hold keys)
+        "username": (c.get("username") or "").strip(),
+        "password": c.get("password") or "",        # secret
+        "dev": (c.get("dev") or "").strip(),         # pinned tun name; auto-assigned
+        "route_lan": bool(c.get("route_lan", False)),
+        "remote_subnets": [s.strip() for s in (c.get("remote_subnets") or []) if s and s.strip()],
+        "block_subnets": [s.strip() for s in (c.get("block_subnets") or []) if s and s.strip()],
+        "accept_pushed_routes": bool(c.get("accept_pushed_routes", True)),
+    }
+
+
+def ovpn_requires_auth(config: str) -> bool:
+    """True if the imported profile expects an interactive username/password.
+
+    We treat a bare ``auth-user-pass`` directive (no file argument) as requiring
+    credentials, so the dial-out never blocks on a prompt under systemd.
+    """
+    for raw in (config or "").splitlines():
+        line = raw.strip()
+        if line.startswith("auth-user-pass"):
+            rest = line[len("auth-user-pass"):].strip()
+            if not rest:
+                return True
+    return False
+
 
 
 def _default_openvpn() -> dict[str, Any]:
@@ -181,6 +224,7 @@ def load_model() -> dict[str, Any]:
         "wireguard": _norm_wireguard(m.get("wireguard", {})),
         "openvpn": _norm_openvpn(m.get("openvpn", {})),
         "fortinet": _norm_fortinet(m.get("fortinet", {})),
+        "ovpn_clients": [_norm_ovpn_client(c) for c in m.get("ovpn_clients", [])],
     }
 
 
@@ -327,3 +371,27 @@ def validate_fortinet(f: dict[str, Any]) -> None:
             raise ValueError("informe o usuário da VPN")
         if not f["password"]:
             raise ValueError("informe a senha da VPN")
+
+
+def v_ovpnc(name: str) -> str:
+    if not _OVPNC_IFACE_RE.match(name or ""):
+        raise ValueError(f"dispositivo do cliente OpenVPN inválido (ovpnc0..ovpnc999): {name!r}")
+    return name
+
+
+def validate_ovpn_client(c: dict[str, Any]) -> None:
+    if not _NAME_RE.match(c["name"]):
+        raise ValueError(f"nome da conexão inválido: {c['name']!r}")
+    if c.get("dev"):
+        v_ovpnc(c["dev"])
+    for s in c["remote_subnets"]:
+        _v_cidr(s, "sub-rede remota acessível")
+    for s in c["block_subnets"]:
+        _v_cidr(s, "sub-rede bloqueada")
+    if c["enabled"]:
+        if not (c.get("config") or "").strip():
+            raise ValueError("importe o conteúdo do arquivo .ovpn")
+        if "remote " not in c["config"] and "remote\t" not in c["config"]:
+            raise ValueError("o perfil .ovpn não contém uma linha 'remote <host> <porta>'")
+        if ovpn_requires_auth(c["config"]) and not (c.get("username") and c.get("password")):
+            raise ValueError("este perfil exige usuário e senha (auth-user-pass)")

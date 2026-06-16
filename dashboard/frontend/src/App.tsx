@@ -29,6 +29,7 @@ import {
   NodeIndexOutlined,
   FileTextOutlined,
   CloudServerOutlined,
+  CloudUploadOutlined,
   RobotOutlined,
   FilterOutlined,
   SwapOutlined,
@@ -58,6 +59,7 @@ import { VlansPage } from "./pages/network/vlans";
 import { MultiWanPage } from "./pages/network/multiwan";
 import { WireGuardPage } from "./pages/vpn/wireguard";
 import { OpenVpnPage } from "./pages/vpn/openvpn";
+import { OvpnClientPage } from "./pages/vpn/ovpnclient";
 import { FortinetPage } from "./pages/vpn/fortinet";
 import { ReservationsPage } from "./pages/network/reservations";
 import { LeasesPage } from "./pages/network/leases";
@@ -336,6 +338,15 @@ export default function App() {
               },
             },
             {
+              name: "ovpn-client",
+              list: "/vpn/ovpn-client",
+              meta: {
+                parent: "vpn-group",
+                label: "OpenVPN (cliente)",
+                icon: <CloudUploadOutlined />,
+              },
+            },
+            {
               name: "fortinet",
               list: "/vpn/fortinet",
               meta: {
@@ -439,6 +450,7 @@ export default function App() {
               <Route path="/vpn">
                 <Route path="wireguard" element={<WireGuardPage />} />
                 <Route path="openvpn" element={<OpenVpnPage />} />
+                <Route path="ovpn-client" element={<OvpnClientPage />} />
                 <Route path="fortinet" element={<FortinetPage />} />
               </Route>
 
