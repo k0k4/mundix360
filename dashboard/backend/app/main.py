@@ -23,6 +23,7 @@ from .routers import (
     content,
     firewall,
     flows,
+    fwlog,
     logs,
     multiwan,
     network,
@@ -88,7 +89,7 @@ def health():
 app.include_router(auth.router)
 
 _protected = [Depends(protect)]
-for r in (overview, alerts, firewall, network, content, flows, logs, system, ai, threatintel, waf, backup, multiwan, vpn):
+for r in (overview, alerts, firewall, network, content, flows, fwlog, logs, system, ai, threatintel, waf, backup, multiwan, vpn):
     app.include_router(r.router, dependencies=_protected)
 
 

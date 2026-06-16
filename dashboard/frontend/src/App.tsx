@@ -358,7 +358,7 @@ export default function App() {
             {
               name: "logs",
               list: "/logs",
-              meta: { label: "Logs", icon: <FileTextOutlined /> },
+              meta: { label: "Eventos de Firewall", icon: <FileTextOutlined /> },
             },
             {
               name: "services",
