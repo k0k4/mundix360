@@ -157,6 +157,12 @@ def _lan_subnets() -> list[str]:
     return nets
 
 
+def _site_local_networks(c: dict[str, Any]) -> list[str]:
+    """Networks on this appliance's side advertised to a site peer. Operators can
+    pin them per site (local_networks); empty falls back to the discovered LANs."""
+    return c.get("local_networks") or _lan_subnets()
+
+
 # ----------------------------------------------------------- config render ----
 
 def _net_mask(cidr: str) -> tuple[str, str]:
@@ -194,22 +200,22 @@ def render_server_conf(ov: dict[str, Any]) -> str:
     a("auth SHA256")
     a("tls-version-min 1.2")
     a("remote-cert-tls client")
-    if ov.get("full_tunnel", True):
-        a('push "redirect-gateway def1 bypass-dhcp"')
-    else:
-        for lan in _lan_subnets():
-            n, m = _net_mask(lan)
-            a(f'push "route {n} {m}"')
     if ov.get("dns"):
         for d in re.split(r"[,\s]+", ov["dns"].strip()):
             if d:
                 a(f'push "dhcp-option DNS {d}"')
-    if site_clients:
+    # Per-client routing lives in the CCD (client-config-dir): road-warriors get
+    # redirect-gateway / split routes, site peers get routes only to the local
+    # networks they may reach. This stops a full-tunnel road-warrior setting from
+    # leaking redirect-gateway onto a site-to-site router.
+    enabled_clients = [c for c in ov["clients"] if c.get("enabled")]
+    if enabled_clients:
         a(f"client-config-dir {CCD_DIR}")
-        for c in site_clients:
-            for sub in c["site_subnets"]:
-                n, m = _net_mask(sub)
-                a(f"route {n} {m}")
+    # Server-side kernel routes for each remote site subnet (paired with CCD iroute).
+    for c in site_clients:
+        for sub in c["site_subnets"]:
+            n, m = _net_mask(sub)
+            a(f"route {n} {m}")
     a(f"status {STATUS_FILE} 5")
     a("verb 3")
     if proto == "udp":
@@ -219,18 +225,34 @@ def render_server_conf(ov: dict[str, Any]) -> str:
 
 def _write_ccd(ov: dict[str, Any]) -> None:
     os.makedirs(CCD_DIR, exist_ok=True)
-    # Rewrite the whole CCD dir from the model so removed sites don't linger.
+    # Rewrite the whole CCD dir from the model so removed clients don't linger.
     for fn in os.listdir(CCD_DIR):
         try:
             os.remove(os.path.join(CCD_DIR, fn))
         except OSError:
             pass
+    full_tunnel = ov.get("full_tunnel", True)
     for c in ov["clients"]:
-        if c.get("enabled") and c.get("type") == "site" and c.get("site_subnets"):
-            lines = []
+        if not c.get("enabled") or not c.get("cn"):
+            continue
+        lines: list[str] = []
+        if c.get("type") == "site" and c.get("site_subnets"):
+            # The server must know which client owns each remote subnet (iroute),
+            # and the remote router must learn a route back to our local networks.
             for sub in c["site_subnets"]:
                 n, m = _net_mask(sub)
                 lines.append(f"iroute {n} {m}")
+            for lan in _site_local_networks(c):
+                n, m = _net_mask(lan)
+                lines.append(f'push "route {n} {m}"')
+        else:  # road-warrior: full tunnel or split routes to our LANs
+            if full_tunnel:
+                lines.append('push "redirect-gateway def1 bypass-dhcp"')
+            else:
+                for lan in _lan_subnets():
+                    n, m = _net_mask(lan)
+                    lines.append(f'push "route {n} {m}"')
+        if lines:
             with open(os.path.join(CCD_DIR, c["cn"]), "w") as f:
                 f.write("\n".join(lines) + "\n")
 
@@ -410,6 +432,8 @@ def status() -> dict[str, Any]:
             "type": c["type"],
             "enabled": c["enabled"],
             "site_subnets": c.get("site_subnets", []),
+            "local_networks": c.get("local_networks", []),
+            "description": c.get("description", ""),
             "has_cert": _cn_issued(c["cn"]),
             "real_address": st.get("real_address", ""),
             "rx_bytes": st.get("rx_bytes", 0),

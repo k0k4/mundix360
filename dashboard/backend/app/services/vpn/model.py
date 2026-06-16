@@ -119,6 +119,10 @@ def _norm_client(c: dict[str, Any]) -> dict[str, Any]:
         "type": ctype,
         "enabled": bool(c.get("enabled", True)),
         "site_subnets": [s.strip() for s in (c.get("site_subnets") or []) if s and s.strip()],
+        # Site-to-site only: which of OUR networks this remote site may reach.
+        # Pushed to the site peer as routes via the CCD. Empty = auto (LAN zones).
+        "local_networks": [s.strip() for s in (c.get("local_networks") or []) if s and s.strip()],
+        "description": (c.get("description") or "").strip(),
     }
 
 
@@ -300,6 +304,8 @@ def validate_openvpn(o: dict[str, Any]) -> None:
             seen_cn.add(c["cn"])
         for s in c["site_subnets"]:
             _v_cidr(s, f"sub-rede do site '{c['name']}'")
+        for s in c["local_networks"]:
+            _v_cidr(s, f"rede local anunciada de '{c['name']}'")
         if c["type"] == "site" and not c["site_subnets"]:
             raise ValueError(f"cliente site '{c['name']}' exige ao menos uma sub-rede remota")
 

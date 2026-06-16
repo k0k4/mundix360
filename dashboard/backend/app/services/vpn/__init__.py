@@ -207,6 +207,8 @@ def save_client(data: dict[str, Any]) -> dict[str, Any]:
             "id": client["id"], "name": client["name"], "cn": client["cn"],
             "type": client["type"], "enabled": client["enabled"],
             "site_subnets": client["site_subnets"],
+            "local_networks": client["local_networks"],
+            "description": client["description"],
         }
 
 

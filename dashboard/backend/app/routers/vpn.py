@@ -97,6 +97,8 @@ class OpenVpnClientModel(BaseModel):
     type: Literal["roadwarrior", "site"] = "roadwarrior"
     enabled: bool = True
     site_subnets: list[str] = Field(default_factory=list)
+    local_networks: list[str] = Field(default_factory=list)
+    description: str = ""
 
 
 @router.put("/openvpn")

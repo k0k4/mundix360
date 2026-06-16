@@ -20,6 +20,8 @@ type Client = {
   type: "roadwarrior" | "site";
   enabled: boolean;
   site_subnets: string[];
+  local_networks: string[];
+  description?: string;
   has_cert?: boolean;
   real_address?: string;
   rx_bytes?: number;
@@ -48,6 +50,8 @@ const blankClient: Client = {
   type: "roadwarrior",
   enabled: true,
   site_subnets: [],
+  local_networks: [],
+  description: "",
 };
 
 function fmtBytes(n?: number): string {
@@ -124,17 +128,23 @@ export function OpenVpnPage() {
   const openEditor = (c: Client | null) => {
     const data = c ? { ...c } : { ...blankClient };
     setEditing(data);
-    form.setFieldsValue({ ...data, site_subnets: (data.site_subnets || []).join(", ") });
+    form.setFieldsValue({
+      ...data,
+      site_subnets: (data.site_subnets || []).join(", "),
+      local_networks: (data.local_networks || []).join(", "),
+    });
   };
 
   const submitClient = async () => {
     const vals = await form.validateFields();
-    const subnets = String(vals.site_subnets || "")
-      .split(/[,\s]+/).map((s: string) => s.trim()).filter(Boolean);
+    const toList = (s: string) =>
+      String(s || "").split(/[,\s]+/).map((x: string) => x.trim()).filter(Boolean);
     try {
       await api.post("/api/vpn/openvpn/clients", {
         id: editing?.id, name: vals.name, type: vals.type,
-        enabled: vals.enabled, site_subnets: subnets,
+        enabled: vals.enabled, site_subnets: toList(vals.site_subnets),
+        local_networks: toList(vals.local_networks),
+        description: vals.description || "",
       });
       antdMessage.success("Cliente salvo");
       setEditing(null);
@@ -216,7 +226,14 @@ export function OpenVpnPage() {
       key: "net",
       render: (_: any, c: Client) =>
         c.type === "site" && c.site_subnets?.length > 0 ? (
-          <Text type="secondary" style={{ fontSize: 12 }}>→ {c.site_subnets.join(", ")}</Text>
+          <Space direction="vertical" size={0}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              remoto → {c.site_subnets.join(", ")}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              local ← {c.local_networks?.length ? c.local_networks.join(", ") : "automático (LAN)"}
+            </Text>
+          </Space>
         ) : enabled && c.online ? (
           <Space direction="vertical" size={0}>
             <Text code>{c.real_address}</Text>
@@ -373,12 +390,37 @@ export function OpenVpnPage() {
             <Form.Item noStyle shouldUpdate={(p, c) => p.type !== c.type}>
               {({ getFieldValue }) =>
                 getFieldValue("type") === "site" ? (
-                  <Form.Item name="site_subnets" label="Sub-redes remotas (vírgula)"
-                    rules={[{ required: true, message: "informe ao menos uma sub-rede" }]}>
-                    <Input placeholder="192.168.70.0/24, 10.0.0.0/24" />
-                  </Form.Item>
+                  <>
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      message="Como o site-to-site fecha"
+                      description={
+                        <>
+                          Este appliance é o <b>servidor</b>. O roteador remoto <b>disca para o nosso
+                          endpoint</b> ({status?.effective_endpoint || "IP da WAN:porta"}) usando o
+                          arquivo <code>.ovpn</code> que você baixa para este site — a autenticação é
+                          por <b>certificado</b> (PKI + tls-crypt), <b>sem senha</b>. Informe abaixo
+                          as sub-redes do lado remoto e quais redes locais ele poderá alcançar.
+                        </>
+                      }
+                    />
+                    <Form.Item name="site_subnets" label="Sub-redes remotas (do outro lado)"
+                      extra="Redes que existem na ponta remota e que a sua rede vai alcançar."
+                      rules={[{ required: true, message: "informe ao menos uma sub-rede" }]}>
+                      <Input placeholder="192.168.70.0/24, 10.0.0.0/24" />
+                    </Form.Item>
+                    <Form.Item name="local_networks" label="Redes locais anunciadas a este site"
+                      extra="Redes do seu lado que o site remoto poderá acessar. Vazio = automático (LANs do appliance).">
+                      <Input placeholder="192.168.1.0/24 (vazio = automático)" />
+                    </Form.Item>
+                  </>
                 ) : null
               }
+            </Form.Item>
+            <Form.Item name="description" label="Descrição (opcional)">
+              <Input placeholder="ex: túnel para a filial do Rio" />
             </Form.Item>
             <Form.Item name="enabled" label="Ativo" valuePropName="checked" initialValue={true}>
               <Switch />
