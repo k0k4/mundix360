@@ -232,15 +232,19 @@ def delete_client(client_id: str) -> dict[str, Any]:
 
 
 def openvpn_client_config(client_id: str) -> str:
-    model = _m.load_model()
-    ov = model["openvpn"]
-    client = next((c for c in ov["clients"] if c["id"] == client_id), None)
-    if not client:
-        raise ValueError("cliente não encontrado")
-    if not _ov.pki_ready():
-        raise ValueError("PKI ainda não inicializada — ative o OpenVPN primeiro")
-    _ov.build_client(client["cn"])
-    return _ov.client_ovpn(ov, client)
+    with _lock:
+        model = _m.load_model()
+        ov = model["openvpn"]
+        client = next((c for c in ov["clients"] if c["id"] == client_id), None)
+        if not client:
+            raise ValueError("cliente não encontrado")
+        # A client profile only needs the PKI (CA + server + client certs +
+        # tls-crypt key) and a reachable endpoint — the server unit does not have
+        # to be running to hand out a .ovpn. Build the PKI/cert on demand so
+        # pre-provisioning works even before the operator clicks "Aplicar".
+        _ov.ensure_pki()
+        _ov.build_client(client["cn"])
+        return _ov.client_ovpn(ov, client)
 
 
 # ---------------------------------------------------------- Fortinet client ---

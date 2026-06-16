@@ -167,8 +167,17 @@ export function OpenVpnPage() {
       a.download = `${(c.cn || c.name).replace(/[^A-Za-z0-9_-]/g, "_")}.ovpn`;
       a.click();
       URL.revokeObjectURL(url);
+      if (!status?.enabled || !status?.unit_active) {
+        antdMessage.warning(
+          'Perfil .ovpn gerado, mas o servidor OpenVPN ainda não está ativo — ative o OpenVPN e clique em "Aplicar" para que o cliente consiga conectar.',
+          6,
+        );
+      } else {
+        antdMessage.success(`Perfil de ${c.name} baixado`);
+      }
+      load(true);
     } catch (e: any) {
-      antdMessage.error(e?.response?.data?.detail || "Sem configuração (ative o OpenVPN primeiro)");
+      antdMessage.error(e?.response?.data?.detail || "Falha ao gerar o perfil .ovpn");
     }
   };
 
@@ -286,6 +295,9 @@ export function OpenVpnPage() {
             <Space>
               <Switch checked={enabled} onChange={(v) => { setEnabled(v); markDirty(); }} />
               <Text strong>{enabled ? "OpenVPN ATIVO" : "OpenVPN desligado"}</Text>
+              {status && enabled !== status.enabled && (
+                <Tag color="warning">não aplicado</Tag>
+              )}
             </Space>
           </Col>
           <Col xs={12} md={4}>
@@ -320,9 +332,14 @@ export function OpenVpnPage() {
             </Space>
           </Col>
         </Row>
-        {status && !status.pki_ready && (
+        {status && enabled !== status.enabled && (
           <Alert style={{ marginTop: 12 }} type="warning" showIcon
-            message="A PKI será criada automaticamente ao ativar o OpenVPN." />
+            message='Alterações não aplicadas'
+            description='Clique em "Aplicar" para que a mudança tenha efeito. Enquanto não aplicar, o serviço continua no estado anterior.' />
+        )}
+        {status && !status.pki_ready && (
+          <Alert style={{ marginTop: 12 }} type="info" showIcon
+            message="A PKI será criada automaticamente ao ativar o OpenVPN ou ao baixar o primeiro .ovpn." />
         )}
       </Card>
 
