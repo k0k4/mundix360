@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Card,
   Row,
@@ -27,6 +27,7 @@ import {
   CheckCircleFilled,
   DeleteOutlined,
   EditOutlined,
+  EyeOutlined,
   CloudUploadOutlined,
   GlobalOutlined,
 } from "@ant-design/icons";
@@ -102,6 +103,10 @@ export function OvpnClientPage() {
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
+  const [logClient, setLogClient] = useState<ClientStatus | null>(null);
+  const [logData, setLogData] = useState<{ unit: string; lines: string[] } | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
+  const logBodyRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -120,6 +125,50 @@ export function OvpnClientPage() {
     const t = window.setInterval(() => load(true), 5000);
     return () => window.clearInterval(t);
   }, [load]);
+
+  // Live log viewer: poll the connection's systemd journal every 2s while open.
+  useEffect(() => {
+    if (!logClient) {
+      setLogData(null);
+      return;
+    }
+    let active = true;
+    const fetchLogs = async () => {
+      try {
+        const r = await api.get<{ unit: string; lines: string[] }>(
+          `/api/vpn/ovpn-clients/${logClient.id}/logs`,
+          { params: { lines: 400 } },
+        );
+        if (active) setLogData(r.data);
+      } catch {
+        /* ignore */
+      }
+    };
+    setLogLoading(true);
+    fetchLogs().finally(() => {
+      if (active) setLogLoading(false);
+    });
+    const t = window.setInterval(fetchLogs, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(t);
+    };
+  }, [logClient]);
+
+  // Keep the log view pinned to the newest line (terminal-style).
+  useEffect(() => {
+    const el = logBodyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logData]);
+
+  const logLineColor = (l: string) => {
+    const u = l.toUpperCase();
+    if (/\b(ERROR|FATAL|CANNOT|FAILED|AUTH_FAILED|TLS ERROR)\b/.test(u)) return "#ff7875";
+    if (/\b(WARNING|WARN|RECONNECTING|RESTART)\b/.test(u)) return "#ffc53d";
+    if (u.includes("INITIALIZATION SEQUENCE COMPLETED") || /\bCONNECTED\b/.test(u))
+      return "#95de64";
+    return "#d9d9d9";
+  };
 
   const openNew = () => {
     setForm(EMPTY);
@@ -355,9 +404,16 @@ export function OvpnClientPage() {
             },
             {
               title: "",
-              width: 90,
+              width: 130,
               render: (_: any, c: ClientStatus) => (
                 <Space>
+                  <Tooltip title="Ver log ao vivo">
+                    <Button
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={() => setLogClient(c)}
+                    />
+                  </Tooltip>
                   <Tooltip title="Editar">
                     <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(c)} />
                   </Tooltip>
@@ -515,6 +571,58 @@ export function OvpnClientPage() {
             </Row>
           </Card>
         </Form>
+      </Modal>
+
+      <Modal
+        open={!!logClient}
+        title={
+          <Space>
+            <EyeOutlined />
+            <span>Log ao vivo — {logClient?.name}</span>
+            <Tag color="green" style={{ marginLeft: 4 }}>
+              <span className="mx-pulse" /> ao vivo (2s)
+            </Tag>
+          </Space>
+        }
+        onCancel={() => setLogClient(null)}
+        width={860}
+        footer={[
+          <Text key="unit" type="secondary" className="mx-mono" style={{ float: "left", fontSize: 11 }}>
+            {logData?.unit || ""}
+          </Text>,
+          <Button key="close" onClick={() => setLogClient(null)}>
+            Fechar
+          </Button>,
+        ]}
+        destroyOnClose
+      >
+        <div
+          ref={logBodyRef}
+          style={{
+            background: "#0b0e14",
+            borderRadius: 8,
+            padding: "12px 14px",
+            height: 480,
+            overflow: "auto",
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: 12,
+            lineHeight: 1.55,
+          }}
+        >
+          {logData?.lines?.length ? (
+            logData.lines.map((l, i) => (
+              <div key={i} style={{ color: logLineColor(l), whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {l}
+              </div>
+            ))
+          ) : (
+            <Text style={{ color: "#8c8c8c" }}>
+              {logLoading
+                ? "Carregando…"
+                : "Sem entradas de log. A conexão pode nunca ter sido iniciada — ative-a e o log aparecerá aqui em tempo real."}
+            </Text>
+          )}
+        </div>
       </Modal>
     </div>
   );

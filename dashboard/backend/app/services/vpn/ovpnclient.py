@@ -298,3 +298,24 @@ def status() -> list[dict[str, Any]]:
     except Exception:
         return []
     return [_client_status(c) for c in clients]
+
+
+def client_logs(client_id: str, lines: int = 200) -> dict[str, Any]:
+    """Return the most recent journal lines for a connection's systemd unit.
+
+    Powers the live log viewer — the operator watches the tunnel come up (or
+    fail) exactly like ``journalctl -u`` on the host.
+    """
+    clients = _m.load_model()["ovpn_clients"]
+    c = next((x for x in clients if x["id"] == client_id), None)
+    if not c:
+        raise ValueError("conexão não encontrada")
+    unit = _unit(c)
+    lines = max(20, min(int(lines), 2000))
+    r = shell.run(
+        ["journalctl", "-u", unit, "--no-pager", "-o", "short-iso", "-n", str(lines)],
+        timeout=15,
+    )
+    out = [ln for ln in r.stdout.splitlines() if ln and "-- No entries --" not in ln]
+    return {"unit": unit, "name": c["name"], "enabled": c["enabled"], "lines": out}
+

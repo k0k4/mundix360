@@ -323,6 +323,11 @@ def ovpn_client_rendered(client_id: str) -> str:
         return _ovc.render_config(client)
 
 
+def ovpn_client_logs(client_id: str, lines: int = 200) -> dict[str, Any]:
+    """Live journal of a dial-out connection's systemd unit (for the log viewer)."""
+    return _ovc.client_logs(client_id, lines)
+
+
 def reapply_ovpn_clients() -> None:
     """Re-assert every enabled dial-out connection (used on startup/reconcile)."""
     with _lock:

@@ -293,6 +293,28 @@ body {
   }
 }
 
+.mx-pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--mx-success, #52c41a);
+  vertical-align: middle;
+  animation: mx-pulse-blink 1.2s ease-in-out infinite;
+}
+@keyframes mx-pulse-blink {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(82, 196, 26, 0.5);
+  }
+  50% {
+    opacity: 0.45;
+    box-shadow: 0 0 0 4px rgba(82, 196, 26, 0);
+  }
+}
+
 /* ---- Cards --------------------------------------------------------------- */
 .ant-card {
   background: linear-gradient(

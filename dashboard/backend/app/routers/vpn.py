@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -179,3 +179,11 @@ def delete_ovpn_client(client_id: str) -> dict[str, Any]:
 @router.get("/ovpn-clients/{client_id}/rendered", response_class=PlainTextResponse)
 def ovpn_client_rendered(client_id: str) -> str:
     return _guard(vpn.ovpn_client_rendered, client_id)
+
+
+@router.get("/ovpn-clients/{client_id}/logs")
+def ovpn_client_logs(
+    client_id: str,
+    lines: int = Query(200, ge=20, le=2000),
+) -> dict[str, Any]:
+    return _guard(vpn.ovpn_client_logs, client_id, lines)
