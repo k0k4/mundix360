@@ -661,9 +661,6 @@ export const ContentFilterPage = () => (
       title="Filtro de Conteúdo"
       subtitle="Bloqueio por categoria, listas atualizáveis, exceções e agendamento."
     />
-    <Alert type="warning" showIcon style={{ marginBottom: 16 }}
-      message="DNS-over-HTTPS pode contornar o filtro"
-      description="O bloqueio atua no DNS local. Para máxima eficácia, bloqueie DoH/DoT no firewall e force os clientes a usar este resolvedor." />
     <Tabs
       items={[
         { key: "live", label: <><EyeOutlined /> Tempo real</>, children: <LiveQueriesTab /> },
