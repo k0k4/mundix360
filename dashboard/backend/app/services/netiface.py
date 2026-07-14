@@ -287,6 +287,26 @@ def list_interfaces() -> dict[str, Any]:
     except Exception:
         pass
 
+    # PPPoE overlay: map physical NIC → PPPoE link info so the Interfaces
+    # page can show the PPP-assigned IP alongside the physical interface.
+    pppoe_map: dict[str, dict[str, Any]] = {}
+    try:
+        from . import pppoe as _pppoe
+        for link in _pppoe.load_model().get("links", []):
+            ppp_iface = f"ppp{link['unit']}"
+            ppp_live = _pppoe._ppp_live(ppp_iface)
+            pppoe_map[link["nic"]] = {
+                "ppp_iface": ppp_iface,
+                "ppp_name": link["name"],
+                "ppp_up": ppp_live["up"],
+                "ppp_local_ip": ppp_live["local_ip"],
+                "ppp_remote_ip": ppp_live["remote_ip"],
+                "ppp_default_route": link.get("default_route", False),
+                "ppp_metric": link.get("route_metric") or (link["unit"] + 100),
+            }
+    except Exception:
+        pass
+
     names = set(live) | set(eth) | set(vlans)
     items: list[dict[str, Any]] = []
     for name in sorted(names):
