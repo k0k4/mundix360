@@ -1,0 +1,17 @@
+Package: mundix360
+Version: @VERSION@-1
+Section: net
+Priority: optional
+Architecture: all
+Depends: @DEPS@
+Maintainer: Mundix Security 360 <suporte@mundix360.local>
+Homepage: https://github.com/k0k4/mundix360
+Description: Appliance de firewall/IDS/SIEM completo (painel web + CLI)
+ O Mundix Security 360 transforma um Ubuntu Server 24.04 em um appliance de
+ segurança: firewall nftables, DNS/DHCP com filtro de conteúdo (dnsmasq),
+ IDS Suricata, SIEM em ClickHouse, WAF (nginx+ModSecurity), VPNs
+ (OpenVPN/WireGuard/FortiClient) e painel web de gestão.
+ .
+ A instalação deste pacote executa o instalador completo no postinst
+ (venv Python, configs base, units systemd, serviços). A senha mestra do
+ painel é gerada ao final e impressa no log /var/log/mundix-install.log.

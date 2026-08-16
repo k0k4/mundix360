@@ -20,8 +20,14 @@ phase_apt() {
 
   if [[ "${MODE}" == "offline" ]]; then
     # Repositório local a partir dos .debs do bundle.
+    # O índice Packages JÁ vem pronto no bundle (gerado pelo build-bundle.sh na
+    # build box). Regenerar aqui é só uma garantia extra — e opcional, porque o
+    # dpkg-scanpackages (pacote dpkg-dev) nem sempre existe no alvo.
     local repo="${BUNDLE_DIR}/debs"
-    run bash -c "cd '${repo}' && dpkg-scanpackages -m . > Packages 2>/dev/null"
+    if command -v dpkg-scanpackages >/dev/null 2>&1; then
+      run bash -c "cd '${repo}' && dpkg-scanpackages -m . > Packages 2>/dev/null"
+    fi
+    [[ -s "${repo}/Packages" ]] || die "índice Packages ausente em ${repo} (bundle incompleto)."
     run bash -c "echo 'deb [trusted=yes] file:${repo} ./' > /etc/apt/sources.list.d/mundix-bundle.list"
     run apt-get update -o Dir::Etc::sourcelist="sources.list.d/mundix-bundle.list" \
         -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" || true

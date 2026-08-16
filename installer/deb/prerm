@@ -1,0 +1,10 @@
+#!/bin/bash
+# mundix360 — prerm: para os serviços do Mundix antes da remoção.
+set -e
+
+if [[ "$1" == "remove" ]]; then
+  systemctl stop mundix-triage.timer mundix-suricata-update.timer 2>/dev/null || true
+  systemctl stop mundix-dashboard-api mundix-siem-ingest mundix-active-response 2>/dev/null || true
+fi
+
+exit 0

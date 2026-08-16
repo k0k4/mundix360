@@ -1,0 +1,20 @@
+#!/bin/bash
+# mundix360 — postrm: no purge, remove o que o instalador criou fora do
+# payload do pacote (units, symlinks, hook de console).
+# ATENÇÃO: /etc/mundix (PKI da VPN, configs) e /var/lib/mundix são ESTADO do
+# operador — não são removidos nem no purge. Remova manualmente se desejar.
+set -e
+
+if [[ "$1" == "purge" ]]; then
+  for u in mundix-dashboard-api.service mundix-siem-ingest.service \
+           mundix-active-response.service mundix-triage.service mundix-triage.timer \
+           mundix-suricata-update.service mundix-suricata-update.timer; do
+    systemctl disable "$u" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/$u"
+  done
+  rm -f /usr/local/bin/mundix-menu /usr/local/bin/mundix-export /etc/profile.d/mundix-menu.sh
+  systemctl daemon-reload 2>/dev/null || true
+  echo "mundix360 purgado. Estado preservado em /etc/mundix e /var/lib/mundix (remova à mão se quiser)."
+fi
+
+exit 0

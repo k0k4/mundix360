@@ -1,0 +1,19 @@
+#!/bin/bash
+# mundix360 — postinst: roda o instalador completo (fases online, sem APT —
+# as dependências já foram resolvidas pelo Depends do pacote).
+set -e
+
+case "$1" in
+  configure)
+    if [[ -z "${2:-}" ]]; then
+      # Instalação nova: gera senha mestra aleatória (impressa no relatório
+      # e no log /var/log/mundix-install.log).
+      /opt/mundix360/installer/mundix-install.sh --skip-apt --skip-frontend -y
+    else
+      # Upgrade: mesmas fases, mas preserva senha mestra/segredos/estado.
+      /opt/mundix360/installer/mundix-install.sh --skip-apt --skip-frontend --upgrade -y
+    fi
+    ;;
+esac
+
+exit 0

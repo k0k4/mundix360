@@ -25,6 +25,8 @@
 #   --openrouter-key VALOR    grava a chave da IA (OpenRouter)
 #   --regen-identity          regenera chaves SSH de host + machine-id (appliance)
 #   --skip-frontend           não builda o SPA (usa dist/ existente, se houver)
+#   --skip-apt                não roda a fase APT (uso no postinst do .deb)
+#   --upgrade                 modo upgrade: preserva senha mestra/segredos
 #   --help, -h                esta ajuda
 #
 # Também aceita via ambiente:
@@ -40,6 +42,8 @@ LOG="/var/log/mundix-install.log"
 ASSUME_YES=0
 REGEN_IDENTITY=0
 SKIP_FRONTEND=0
+SKIP_APT=0
+UPGRADE=0
 MASTER_PW="${MUNDIX_MASTER_PASSWORD:-}"
 OR_KEY="${OPENROUTER_API_KEY:-}"
 
@@ -50,6 +54,8 @@ while [[ $# -gt 0 ]]; do
     --openrouter-key)    OR_KEY="${2:-}"; shift ;;
     --regen-identity)    REGEN_IDENTITY=1 ;;
     --skip-frontend)     SKIP_FRONTEND=1 ;;
+    --skip-apt)          SKIP_APT=1 ;;   # usado no postinst do .deb (deps vêm do Depends)
+    --upgrade)           UPGRADE=1 ;;    # upgrade de pacote: preserva segredos/estado
     -h|--help)           sed -n '2,45p' "$0"; exit 0 ;;
     *) echo "opção desconhecida: $1" >&2; exit 2 ;;
   esac
@@ -146,6 +152,10 @@ phase_code() {
 
 # ---------------------------------------------------------------- fase: apt ----
 phase_apt() {
+  if [[ "$SKIP_APT" == "1" ]]; then
+    step "Pacotes do sistema (pulado — dependências já resolvidas pelo pacote .deb)"
+    return 0
+  fi
   step "Pacotes do sistema (online)"
   # Repositórios de terceiros (ClickHouse, etc.) — campos separados por '|':
   #   nome|linha-deb|url-da-chave-armored|fingerprint-keyserver(opcional)
@@ -364,6 +374,17 @@ _waf_selftest() {
 phase_services() {
   step "Subindo e verificando serviços"
 
+  # O systemd-resolved segura a porta 53 e conflita com o dnsmasq do appliance.
+  if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+    systemctl disable --now systemd-resolved >>"$LOG" 2>&1 || true
+    ok "systemd-resolved desabilitado (dnsmasq assume a 53)"
+  fi
+  if [[ -L /etc/resolv.conf ]]; then
+    rm -f /etc/resolv.conf
+    printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf
+    ok "/etc/resolv.conf → dnsmasq local"
+  fi
+
   # Datastores primeiro (best-effort — a API tem Wants, não Requires).
   start_verify clickhouse-server.service 0 || true
   start_verify valkey-server.service 0 || true
@@ -421,6 +442,11 @@ phase_identity() {
 
 # ----------------------------------------------------- fase: senha + ia --------
 phase_secrets() {
+  if [[ "$UPGRADE" == "1" ]]; then
+    step "Senha mestra do painel"
+    ok "upgrade: senha mestra e segredos preservados"
+    return 0
+  fi
   step "Senha mestra do painel"
   local pw="$MASTER_PW"
   if [[ -z "$pw" ]]; then

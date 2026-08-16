@@ -33,7 +33,7 @@ step "2/6 — Baixando pacotes .deb (fecho completo de dependências)"
 apt-get update 2>/dev/null || warn "apt-get update com avisos (repos de terceiros) — seguindo com as listas em cache."
 mapfile -t CLOSURE < <(
   apt-cache depends --recurse --no-recommends --no-suggests \
-    --no-conflicts --no-breaks --no-replaces --no-enhances --no-pre-depends \
+    --no-conflicts --no-breaks --no-replaces --no-enhances \
     "${APT_PACKAGES[@]}" 2>/dev/null | grep -E '^[a-zA-Z0-9]' | sort -u
 )
 log "fecho de dependências: ${#CLOSURE[@]} pacotes"
@@ -43,7 +43,20 @@ log "fecho de dependências: ${#CLOSURE[@]} pacotes"
     apt-get download "$p" 2>/dev/null || true
   done
 )
+# Garantia de completude: todo pacote REAL do fecho precisa ter .deb no bundle
+# (pacotes virtuais não têm candidato a download e são ignorados).
+missing_deb=0
+for p in "${CLOSURE[@]}"; do
+  if apt-cache show "$p" >/dev/null 2>&1 && ! ls "${STAGE}/bundle/debs/${p}_"*.deb >/dev/null 2>&1; then
+    warn "pacote do fecho sem .deb no bundle: ${p}"
+    missing_deb=1
+  fi
+done
+[[ "${missing_deb}" == "0" ]] || die "bundle incompleto — pacotes faltando (veja avisos acima)."
 ( cd "${STAGE}/bundle/debs" && dpkg-scanpackages -m . > Packages 2>/dev/null || true )
+# O índice é CRÍTICO para a instalação offline no alvo — falhe alto se veio vazio.
+[[ -s "${STAGE}/bundle/debs/Packages" ]] \
+  || die "índice Packages do bundle ficou vazio/ausente — verifique o dpkg-scanpackages."
 ok "$(ls "${STAGE}/bundle/debs"/*.deb 2>/dev/null | wc -l) .debs baixados"
 
 step "3/6 — Baixando wheels Python"

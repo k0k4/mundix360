@@ -116,6 +116,34 @@ _set_openrouter() {
   ok "chave OpenRouter gravada"
 }
 
+_fix_local_dns() {
+  step "Resolvedor local (dnsmasq na porta 53)"
+  # O systemd-resolved segura a 53 e conflita com o dnsmasq do appliance.
+  if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+    run systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
+    ok "systemd-resolved desabilitado"
+  fi
+  if [[ -L /etc/resolv.conf ]]; then
+    run rm -f /etc/resolv.conf
+    run bash -c "printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf"
+    ok "/etc/resolv.conf → dnsmasq local"
+  fi
+}
+
+_fix_suricata_iface() {
+  # Suricata (af-packet) precisa escutar numa interface que exista NESTE hardware.
+  local yaml=/etc/suricata/suricata.yaml
+  [[ -f "$yaml" ]] || return 0
+  local cur
+  cur="$(awk '/^af-packet:/{getline; if ($0 ~ /interface:/) {gsub(/.*interface:[[:space:]]*/,""); gsub(/[[:space:]].*/,""); print; exit}}' "$yaml")"
+  [[ -z "$cur" ]] && return 0
+  [[ -e "/sys/class/net/$cur" ]] && return 0
+  mapfile -t nics < <(_detect_nics)
+  (( ${#nics[@]} > 0 )) || return 0
+  run sed -i "0,/^\([[:space:]]*- interface:\)[[:space:]]*${cur}/s//\1 ${nics[0]}/" "$yaml"
+  ok "suricata: af-packet ${cur} → ${nics[0]}"
+}
+
 phase_firstboot() {
   if marked firstboot; then
     ok "first-boot já executado — pulando (identidade preservada)."
@@ -124,7 +152,9 @@ phase_firstboot() {
   step "FIRST-BOOT — configuração inicial do appliance"
 
   _regen_identity
+  _fix_local_dns
   _bootstrap_lan
+  _fix_suricata_iface
   _set_master_password
   _set_openrouter
 

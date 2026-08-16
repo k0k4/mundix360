@@ -21,7 +21,7 @@ INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${INSTALLER_DIR}/lib/common.sh"
 source "${INSTALLER_DIR}/manifest.env"
 
-UBUNTU_VERSION="24.04.2"
+UBUNTU_VERSION="24.04.4"
 UBUNTU_ISO_URL="https://releases.ubuntu.com/24.04/ubuntu-${UBUNTU_VERSION}-live-server-amd64.iso"
 UBUNTU_ISO=""
 BUNDLE=""

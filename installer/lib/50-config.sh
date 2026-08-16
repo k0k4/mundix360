@@ -26,6 +26,9 @@ phase_config() {
 
   # ModSecurity.
   _seed_file "${cfg}/modsec-main.conf" /etc/nginx/modsec/main.conf
+  _seed_file "${cfg}/modsec-overrides.conf" /etc/nginx/modsec/mundix-overrides.conf
+  _seed_file "${cfg}/modsec-before-crs.conf" /etc/nginx/modsec/mundix-before-crs.conf
+  _seed_file "${cfg}/modsec-after-crs.conf" /etc/nginx/modsec/mundix-after-crs.conf
 
   # nftables base (inclui os arquivos gerenciados em runtime pelo fwmanage).
   _seed_file "${cfg}/nftables-base.conf" /etc/nftables.conf
@@ -39,6 +42,9 @@ phase_config() {
       [[ -e "$f" ]] || continue
       _seed_file "$f" "/etc/dnsmasq.d/$(basename "$f")"
     done
+    # O 00-global.conf loga em /var/log/dnsmasq/ — sem o diretório o serviço
+    # não sobe (o dnsmasq não cria o path sozinho ao abrir o log).
+    run install -d -o dnsmasq -g nogroup -m 0755 /var/log/dnsmasq
   fi
 
   # ClickHouse: perfil de baixo consumo (desativa logs de auto-instrumentação
@@ -58,6 +64,22 @@ phase_config() {
     src="${MUNDIX_ROOT}/${pair%%::*}"; dst="${pair##*::}"
     [[ -e "$src" ]] && _seed_file "$src" "$dst" 0640
   done
+
+  # Menu de console de recuperação (estilo pfSense): comando global + abertura
+  # automática no login root do console local (SSH nunca é interceptado).
+  if [[ -f "${MUNDIX_ROOT}/scripts/setup/mundix-menu.sh" ]]; then
+    run ln -sf "${MUNDIX_ROOT}/scripts/setup/mundix-menu.sh" /usr/local/bin/mundix-menu
+    run chmod 0755 "${MUNDIX_ROOT}/scripts/setup/mundix-menu.sh"
+    run install -D -m 0644 "${MUNDIX_ROOT}/scripts/setup/mundix-menu.profile" /etc/profile.d/mundix-menu.sh
+    ok "menu de console instalado (/usr/local/bin/mundix-menu)"
+  fi
+
+  # Export HTTP temporário dos artefatos (ISO/bundle) para download.
+  if [[ -f "${MUNDIX_ROOT}/scripts/setup/mundix-export.sh" ]]; then
+    run ln -sf "${MUNDIX_ROOT}/scripts/setup/mundix-export.sh" /usr/local/bin/mundix-export
+    run chmod 0755 "${MUNDIX_ROOT}/scripts/setup/mundix-export.sh"
+    ok "export instalado (/usr/local/bin/mundix-export)"
+  fi
 
   ok "configuração base aplicada"
 }

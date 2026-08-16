@@ -18,7 +18,13 @@ echo "Date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo ""
 
 echo "--- NETWORK ---"
-for iface in ens18 ens19 ens20 ens21; do
+# NICs físicas detectadas dinamicamente (sem hardcode de nomes).
+mapfile -t HC_IFACES < <(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' \
+    | grep -vE '^(lo|veth|docker|br-|vnet|tun|tap|wg|virbr|ppp)' | sed 's/@.*//' | sort -u)
+if [ "${#HC_IFACES[@]}" -eq 0 ]; then
+    fail "nenhuma interface física detectada"
+fi
+for iface in "${HC_IFACES[@]}"; do
     if ip link show "$iface" 2>/dev/null | grep -q "state UP"; then
         ip_addr=$(ip -4 addr show "$iface" 2>/dev/null | grep -oP 'inet \K[^ ]+' || echo "no-ip")
         ok "$iface: UP ($ip_addr)"
@@ -70,17 +76,15 @@ else
     fail "DNS resolution: failed"
 fi
 
-if dig @192.168.0.2 github.com +short +time=3 &>/dev/null; then
-    ok "DNS LAN (ens19): working"
-else
-    warn "DNS LAN (ens19): not reachable"
-fi
-
-if dig @10.0.0.2 github.com +short +time=3 &>/dev/null; then
-    ok "DNS DMZ (ens20): working"
-else
-    warn "DNS DMZ (ens20): not reachable"
-fi
+# Testa o dnsmasq em cada IP local (LAN/DMZ/etc.), sem hardcode de endereços.
+while read -r lip; do
+    [ -n "$lip" ] || continue
+    if dig @"$lip" github.com +short +time=3 &>/dev/null; then
+        ok "DNS em $lip: working"
+    else
+        warn "DNS em $lip: not reachable"
+    fi
+done < <(ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}' | grep -v '^127\.')
 echo ""
 
 echo "--- SURICATA ---"
