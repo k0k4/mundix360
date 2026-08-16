@@ -1,0 +1,54 @@
+# =============================================================================
+# CLA Assistant (contributor-assistant/github-action)
+#
+# Em toda pull request, exige que o contribuidor assine o CLA (CLA.md)
+# comentando a frase de assinatura. As assinaturas ficam registradas em
+# signatures/version1/cla.json neste repositório (branch main).
+#
+# Como funciona para o contribuidor:
+#   1. Abre o PR → o bot comenta pedindo a assinatura e marca o status como
+#      "pending/failure".
+#   2. Ele comenta: "Eu li o Documento CLA e assino o CLA por meio deste
+#      comentário" → o bot grava a assinatura e o status vira "success".
+#   3. Se o status não atualizar, comentar "recheck".
+# =============================================================================
+name: "CLA Assistant"
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  CLAAssistant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "CLA Assistant"
+        if: >-
+          (github.event.comment.body == 'recheck' ||
+           github.event.comment.body == 'Eu li o Documento CLA e assino o CLA por meio deste comentário') ||
+          github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-document: "https://github.com/k0k4/mundix360/blob/main/CLA.md"
+          path-to-signatures: "signatures/version1/cla.json"
+          branch: "main"
+          # Mantenedor e bots não precisam assinar.
+          allowlist: "k0k4,bot*"
+          custom-notsigned-prcomment: >-
+            Obrigado pela sua contribuição ao Mundix Security 360! Antes do
+            merge, precisamos que você assine o nosso Acordo de Licença de
+            Contribuidor: leia $pathToCLADocument e depois comente neste PR
+            exatamente a frase abaixo.
+          custom-pr-sign-comment: "Eu li o Documento CLA e assino o CLA por meio deste comentário"
+          custom-allsigned-prcomment: "Todos os contribuidores assinaram o CLA. Obrigado!"
+          lock-pullrequest-aftermerge: true

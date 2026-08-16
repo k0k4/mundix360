@@ -191,6 +191,13 @@ A versão e a lista de pacotes/units vêm de `installer/manifest.env`.
 - A integração de IA (OpenRouter) é **opcional** e desativada sem chave em `configs/openrouter.env`.
 - Credenciais locais de serviço (ex.: usuário `akvorado` do ClickHouse) são restritas a localhost; ao expor serviços, troque-as.
 
+## Contribuindo
+
+Contribuições são bem-vindas! Leia [CONTRIBUTING.md](CONTRIBUTING.md) antes de
+abrir issues e pull requests. Na primeira contribuição, o **CLA Assistant**
+(bot) pedirá a assinatura do [Acordo de Licença de Contribuidor](CLA.md) —
+basta comentar a frase indicada no próprio PR.
+
 ## Licença e créditos
 
 Este projeto é **source-available** sob licença própria — veja [LICENSE](LICENSE):
