@@ -14,8 +14,9 @@ autoinstall:
   locale: pt_BR.UTF-8
   keyboard:
     layout: br
-  # Identidade temporária do SO. TROQUE a senha no primeiro acesso (ou via UI).
-  # Usuário: mundix  /  Senha: mundix360
+  # Identidade temporária do SO. A senha EXPIRA no primeiro boot
+  # (chage -d 0 no first-boot): o login inicial exige definir senha nova.
+  # Usuário: mundix  /  Senha inicial: mundix360
   identity:
     hostname: mundix
     username: mundix

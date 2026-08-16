@@ -46,6 +46,11 @@ function Shell({ children }: { children: React.ReactNode }) {
           </Title>
         </div>
         {children}
+        <div style={{ textAlign: "center", marginTop: 20 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            Mundix Security 360 — Projeto de Lucieliton Mundim · +55 62 98438-4774
+          </Text>
+        </div>
       </Card>
     </div>
   );

@@ -1,0 +1,103 @@
+================================================================================
+MUNDIX SECURITY 360 — LICENÇA DE USO (source-available, não é licença OSI)
+================================================================================
+
+Copyright (c) 2026 Lucieliton Mundim
+"Mundix Security 360" — Projeto de Lucieliton Mundim · +55 62 98438-4774
+
+--------------------------------------------------------------------------------
+1. DEFINIÇÕES
+--------------------------------------------------------------------------------
+"Software"  — o código-fonte, scripts, configurações, documentação e demais
+              arquivos deste repositório, bem como suas versões compiladas.
+
+"Appliance" — cada instalação ativa do Software em produção (máquina física
+              ou virtual) operada como firewall/UTM para uma rede.
+
+"Uso Comercial" — qualquer uso do Software, direto ou indireto, em benefício
+              de organização com fins lucrativos, incluindo operar o Software
+              como serviço para terceiros (MSP, hospedagem, consultoria).
+
+"Créditos"  — a identificação de autoria:
+              "Mundix Security 360 — Projeto de Lucieliton Mundim
+               +55 62 98438-4774"
+
+--------------------------------------------------------------------------------
+2. LICENÇA GRATUITA
+--------------------------------------------------------------------------------
+É concedida a você, gratuitamente, uma licença mundial, não exclusiva e
+intransferível para usar, copiar, estudar, modificar e redistribuir o
+Software, desde que o uso se enquadre em AO MENOS UMA das condições abaixo:
+
+  a) USO NÃO COMERCIAL — uso pessoal, doméstico, educacional, acadêmico, de
+     pesquisa ou avaliação, sem fins lucrativos. Não há limite de Appliances.
+
+  b) USO COMERCIAL ATÉ 50 APPLIANCES — Uso Comercial gratuito enquanto o
+     TOTAL de Appliances em produção operados por você (ou pela sua
+     organização, incluindo clientes atendidos com o Software) não exceder
+     50 (cinquenta) unidades.
+
+--------------------------------------------------------------------------------
+3. USO COMERCIAL ACIMA DE 50 APPLIANCES
+--------------------------------------------------------------------------------
+Exceder 50 (cinquenta) Appliances em produção exige licença comercial
+específica, a ser negociada com o autor. Contato: +55 62 98438-4774.
+
+--------------------------------------------------------------------------------
+4. CONDIÇÕES OBRIGATÓRIAS (valem para qualquer uso, cópia ou redistribuição)
+--------------------------------------------------------------------------------
+  a) PRESERVAÇÃO DE CRÉDITOS — É PROIBIDO remover, apagar, ocultar, ofuscar
+     ou alterar os Créditos em qualquer cópia ou obra derivada do Software,
+     incluindo (i) os cabeçalhos e avisos de copyright no código-fonte,
+     (ii) o arquivo LICENSE e o README.md, e (iii) a identificação de autoria
+     exibida nas interfaces do Software (ex.: telas de login e "sobre").
+
+  b) REDISTRIBUIÇÃO — Toda redistribuição, modificada ou não, deve incluir
+     este arquivo LICENSE na íntegra e manter os Créditos de forma clara e
+     visível.
+
+  c) MARCA — "Mundix Security 360" é o nome do projeto do autor. Obras
+     derivadas NÃO podem se apresentar como "Mundix Security 360" nem usar o
+     nome para promoção sem autorização escrita; devem identificar-se como
+     derivações, mantendo os Créditos do projeto original.
+
+--------------------------------------------------------------------------------
+5. RESTRIÇÕES
+--------------------------------------------------------------------------------
+  a) Não é permitido vender o Software, isoladamente ou como produto
+     empacotado, fora das condições da Seção 2(b), sem licença comercial.
+  b) Não é permitido sublicenciar o Software sob termos diferentes destes.
+  c) Não é permitido usar o Software para fins ilícitos.
+
+--------------------------------------------------------------------------------
+6. COMPONENTES DE TERCEIROS
+--------------------------------------------------------------------------------
+O Software integra e/ou instala componentes de terceiros (ex.: Ubuntu Linux,
+nftables, Suricata, Nginx, ModSecurity CRS, dnsmasq, ClickHouse, OpenVPN,
+WireGuard e outros), cada qual regido por sua própria licença. Esta licença
+aplica-se apenas às partes autorais do Mundix Security 360 e não altera as
+licenças desses componentes.
+
+--------------------------------------------------------------------------------
+7. GARANTIAS E RESPONSABILIDADE
+--------------------------------------------------------------------------------
+O SOFTWARE É FORNECIDO "NO ESTADO EM QUE SE ENCONTRA", SEM GARANTIA DE
+QUALQUER TIPO, EXPRESSA OU IMPLÍCITA, INCLUINDO, SEM LIMITAÇÃO, GARANTIAS
+DE COMERCIABILIDADE, ADEQUAÇÃO A UM FIM ESPECÍFICO E NÃO VIOLAÇÃO. EM
+NENHUMA HIPÓTESE O AUTOR SERÁ RESPONSÁVEL POR DANOS DIRETOS, INDIRETOS,
+INCIDENTAIS OU CONSEQUENCIAIS DECORRENTES DO USO OU DA IMPOSSIBILIDADE DE
+USO DO SOFTWARE. Trata-se de um firewall: a operação em produção é de
+responsabilidade de quem o implanta.
+
+--------------------------------------------------------------------------------
+8. RESCISÃO
+--------------------------------------------------------------------------------
+O descumprimento de qualquer condição desta licença encerra
+automaticamente os direitos concedidos. As Seções 4, 6, 7 e 8 sobrevivem
+à rescisão.
+
+================================================================================
+Resumo informal (não substitui o texto acima): uso não comercial é livre e
+gratuito; uso comercial é gratuito até 50 appliances; nunca remova os
+créditos do autor.
+================================================================================

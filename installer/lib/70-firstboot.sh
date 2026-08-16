@@ -130,6 +130,15 @@ _fix_local_dns() {
   fi
 }
 
+_expire_console_password() {
+  # A ISO de autoinstall cria o usuário local "mundix" com senha padrão conhecida
+  # (ver installer/iso/user-data). Como o projeto é público, essa senha não pode
+  # permanecer válida: exige troca no primeiro login (console ou SSH).
+  if id mundix >/dev/null 2>&1; then
+    run chage -d 0 mundix && ok "usuário 'mundix': troca de senha exigida no 1º login"
+  fi
+}
+
 _fix_suricata_iface() {
   # Suricata (af-packet) precisa escutar numa interface que exista NESTE hardware.
   local yaml=/etc/suricata/suricata.yaml
@@ -152,6 +161,7 @@ phase_firstboot() {
   step "FIRST-BOOT — configuração inicial do appliance"
 
   _regen_identity
+  _expire_console_password
   _fix_local_dns
   _bootstrap_lan
   _fix_suricata_iface
