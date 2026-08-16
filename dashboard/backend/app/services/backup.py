@@ -6,6 +6,11 @@ timestamped ``.tar.gz`` with a manifest:
   - Firewall:   /etc/nftables.conf, /etc/nftables.d/
   - DNS/DHCP:   /etc/dnsmasq.conf, /etc/dnsmasq.d/
   - WAF:        /etc/nginx/sites-available/mundix360, /etc/nginx/modsec/
+  - Rede:       /etc/netplan, /etc/mundix (interfaces/pppoe/multiwan/vpn)
+  - PPPoE:      /etc/ppp (peers, chap/pap-secrets, hooks ip-up.d)
+  - Serviços:   units systemd mundix-* (inclusive o template pppoe@)
+  - VPN:        /etc/openvpn
+  - IDS:        /etc/suricata (configs; regras são rebaixáveis via update)
   - Dashboard:  backend/data/*.json  +  ai.db (consistent SQLite snapshot)
   - SIEM:       ClickHouse akvorado.siem_alerts (schema + Native dump, gz)
 
@@ -54,10 +59,28 @@ CONFIG_PATHS = [
     "/etc/dnsmasq.d",
     "/etc/netplan",
     "/etc/mundix",
+    "/etc/ppp",
+    "/etc/openvpn",
     "/etc/sysctl.d/98-mundix-hardening.conf",
     "/etc/sysctl.d/99-mundix-forward.conf",
     "/etc/nginx/sites-available/mundix360",
+    "/etc/nginx/sites-enabled",
     "/etc/nginx/modsec",
+    # Units systemd do appliance — sem elas um restore não devolve os serviços.
+    "/etc/systemd/system/mundix-active-response.service",
+    "/etc/systemd/system/mundix-dashboard-api.service",
+    "/etc/systemd/system/mundix-firstinstall.service",
+    "/etc/systemd/system/mundix-pppoe@.service",
+    "/etc/systemd/system/mundix-siem-ingest.service",
+    "/etc/systemd/system/mundix-suricata-update.service",
+    "/etc/systemd/system/mundix-suricata-update.timer",
+    "/etc/systemd/system/mundix-triage.service",
+    "/etc/systemd/system/mundix-triage.timer",
+    # Suricata: só configs/tuning — o ruleset é rebaixado pelo suricata-update.
+    "/etc/suricata/suricata.yaml",
+    "/etc/suricata/classification.config",
+    "/etc/suricata/reference.config",
+    "/etc/suricata/threshold.config",
 ]
 
 _CH_BASE = f"http://{settings.clickhouse_host}:{settings.clickhouse_port}/"
@@ -233,6 +256,11 @@ def create_backup() -> dict[str, Any]:
             _add_bytes(tar, "manifest.json",
                        json.dumps(manifest, indent=2).encode())
         os.replace(tmp_path, path)
+        # O arquivo contém segredos (chap/pap-secrets, chaves VPN): restringe.
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
     finally:
         if tmp_db and os.path.exists(tmp_db):
             try:

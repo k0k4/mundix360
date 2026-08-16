@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from ..services import dns, fwmanage, netiface, network, system
+from ..services import dns, fwmanage, netiface, network, pppoe, system
 
 router = APIRouter(prefix="/api/network", tags=["network"])
 
@@ -347,3 +347,89 @@ def update_ssh_rule(rid: str, rule: SshRuleModel,
 def remove_ssh_rule(rid: str, revert_after: int = Query(0, ge=0, le=600)):
     _ssh_guard(fwmanage.delete_ssh_rule, rid, revert_after=revert_after)
     return fwmanage.get_ssh_access()
+
+
+# ------------------------------------------------- PPPoE WAN authentication ---
+# Dial-up authentication (pppd + rp-pppoe) for ISP links that hand the uplink
+# off over PPPoE. Each link is pinned to a stable pppN interface; the link
+# flagged as default route drives the managed firewall WAN + outbound NAT.
+
+
+class PppoeLinkModel(BaseModel):
+    id: str | None = None
+    name: str
+    nic: str
+    username: str
+    password: str = ""
+    enabled: bool = True
+    default_route: bool = True
+    route_metric: int = Field(0, ge=0, le=4096)
+    use_peer_dns: bool = False
+    mtu: int = Field(1492, ge=1280, le=1500)
+    lcp_echo_interval: int = Field(20, ge=0, le=600)
+    lcp_echo_failure: int = Field(3, ge=0, le=100)
+
+
+class PppoeEnabledModel(BaseModel):
+    enabled: bool
+
+
+class PppoeDiscoverModel(BaseModel):
+    nic: str
+
+
+def _pppoe_guard(fn, *args):
+    try:
+        return fn(*args)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pppoe")
+def pppoe_status():
+    return pppoe.get_status()
+
+
+@router.post("/pppoe")
+def create_pppoe(link: PppoeLinkModel):
+    return _pppoe_guard(lambda d: pppoe.save_link(d, create=True),
+                        link.model_dump(exclude_none=True))
+
+
+@router.put("/pppoe/{link_id}")
+def update_pppoe(link_id: str, link: PppoeLinkModel):
+    data = link.model_dump(exclude_none=True)
+    data["id"] = link_id
+    return _pppoe_guard(lambda d: pppoe.save_link(d, create=False), data)
+
+
+@router.delete("/pppoe/{link_id}")
+def delete_pppoe(link_id: str):
+    return _pppoe_guard(pppoe.delete_link, link_id)
+
+
+@router.post("/pppoe/{link_id}/connect")
+def connect_pppoe(link_id: str):
+    return _pppoe_guard(pppoe.connect, link_id)
+
+
+@router.post("/pppoe/{link_id}/disconnect")
+def disconnect_pppoe(link_id: str):
+    return _pppoe_guard(pppoe.disconnect, link_id)
+
+
+@router.put("/pppoe/{link_id}/enabled")
+def enable_pppoe(link_id: str, body: PppoeEnabledModel):
+    return _pppoe_guard(pppoe.set_enabled, link_id, body.enabled)
+
+
+@router.get("/pppoe/{link_id}/logs")
+def pppoe_logs(link_id: str, lines: int = Query(200, ge=20, le=2000)):
+    return _pppoe_guard(pppoe.link_logs, link_id, lines)
+
+
+@router.post("/pppoe/discover")
+def pppoe_discover(body: PppoeDiscoverModel):
+    return _pppoe_guard(pppoe.discover, body.nic)

@@ -14,6 +14,13 @@ exactly the failure that matters here. So we add an active layer:
     symmetric (a packet that arrived via WAN2 replies via WAN2),
   * a dedicated nftables NAT table that masquerades out every WAN member.
 
+PPPoE links (point-to-point) are first-class members: they have no gateway
+IP, so nexthops are installed dev-only (``ip route replace default dev ppp1``
+/ ECMP ``nexthop dev pppN weight N``) — the same form pppd itself uses. The
+pppd-installed default routes (metric 101/200) are left untouched and act as
+a fallback layer below the metric-0 route this module installs; when a ppp
+interface dies, the kernel drops every route bound to it automatically.
+
 Design guarantees
 -----------------
 * **Opt-in, OFF by default.** When disabled this module touches nothing — the
@@ -44,7 +51,13 @@ MWAN_NFT_TABLE = "mundix_mwan"
 # ip-rule priority band and routing-table id base we own exclusively.
 _RULE_PRIO_BASE = 11000
 _TABLE_ID_BASE = 200
-_MAX_SLOTS = 64  # fixed owned band; cleared fully so reconfigure never leaks
+# ATENÇÃO: a banda de tabelas NÃO pode passar de 252 — os ids 253/254/255 são
+# reservados pelo kernel (default/main/local). _clear_source_routing() faz
+# `ip route flush table N` em toda a banda: com 64 slots (200..263) ele atingia
+# a tabela 254 (MAIN) e apagava TODAS as rotas do appliance a cada tick do
+# monitor — causa raiz da queda geral de 2026-07. 32 slots (200..231) cobrem
+# folgadamente os 2-3 links suportados e ficam longe da zona reservada.
+_MAX_SLOTS = 32  # fixed owned band; cleared fully so reconfigure never leaks
 
 _lock = threading.RLock()
 _health: dict[str, dict[str, Any]] = {}
@@ -108,6 +121,21 @@ def _v_iface(v: str) -> str:
     return v
 
 
+def _is_ptp(iface: str) -> bool:
+    """Point-to-point link (PPPoE): routes are dev-only, there is no 'via'."""
+    return iface.startswith("ppp")
+
+
+def _peer_ip(iface: str) -> str | None:
+    """The remote end of a point-to-point link (informational only)."""
+    r = shell.run(["ip", "-o", "-4", "addr", "show", "dev", iface], timeout=8)
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if "peer" in parts:
+            return parts[parts.index("peer") + 1].split("/")[0]
+    return None
+
+
 def _resolve_gateway(iface: str) -> str | None:
     """Resolve a link's gateway: the explicit default 'via' on that interface
     (static or DHCP-assigned). Returns None if none is known yet."""
@@ -139,6 +167,19 @@ def _effective_gateway(g: dict[str, Any]) -> str | None:
     if g["gateway"] and g["gateway"] != "auto":
         return g["gateway"]
     return _resolve_gateway(g["iface"])
+
+
+def _nexthop_parts(g: dict[str, Any]) -> list[str] | None:
+    """Nexthop tokens for a gateway: ['via', gw, 'dev', if] on Ethernet WANs,
+    ['dev', if] on point-to-point (PPPoE) links — ppp interfaces carry no
+    gateway IP; the device itself is the nexthop. None if not resolvable yet
+    (Ethernet link without a known gateway)."""
+    if _is_ptp(g["iface"]):
+        return ["dev", g["iface"]]
+    gw = _effective_gateway(g)
+    if not gw:
+        return None
+    return ["via", gw, "dev", g["iface"]]
 
 
 # ---------------------------------------------------------- health -----------
@@ -200,19 +241,19 @@ def _active_gateways(model: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _build_default_cmd(actives: list[dict[str, Any]]) -> list[str] | None:
-    nexthops: list[tuple[str, str, int]] = []
+    nexthops: list[tuple[list[str], int]] = []
     for g in actives:
-        gw = _effective_gateway(g)
-        if gw:
-            nexthops.append((gw, g["iface"], max(1, g["weight"])))
+        nh = _nexthop_parts(g)
+        if nh:
+            nexthops.append((nh, max(1, g["weight"])))
     if not nexthops:
         return None
     if len(nexthops) == 1:
-        gw, iff, _ = nexthops[0]
-        return ["ip", "route", "replace", "default", "via", gw, "dev", iff]
+        nh, _ = nexthops[0]
+        return ["ip", "route", "replace", "default", *nh]
     cmd = ["ip", "route", "replace", "default"]
-    for gw, iff, w in nexthops:
-        cmd += ["nexthop", "via", gw, "dev", iff, "weight", str(w)]
+    for nh, w in nexthops:
+        cmd += ["nexthop", *nh, "weight", str(w)]
     return cmd
 
 
@@ -222,6 +263,8 @@ def _clear_source_routing(model: dict[str, Any] | None = None) -> None:
     for i in range(_MAX_SLOTS):
         prio = _RULE_PRIO_BASE + i
         tid = _TABLE_ID_BASE + i
+        if tid >= 253:
+            continue  # defesa em profundidade: nunca tocar default/main/local
         # Remove any rule we own at this priority (loop until none left).
         for _ in range(4):
             r = shell.run(["ip", "rule", "del", "priority", str(prio)], timeout=8)
@@ -236,14 +279,14 @@ def _apply_source_routing(model: dict[str, Any]) -> None:
     for i, g in enumerate(model["gateways"]):
         if not g.get("enabled"):
             continue
-        gw = _effective_gateway(g)
+        nh = _nexthop_parts(g)
         src = _src_ip(g["iface"])
-        if not gw or not src:
+        if not nh or not src:
             continue
         tid = _TABLE_ID_BASE + i
         prio = _RULE_PRIO_BASE + i
-        shell.run(["ip", "route", "replace", "default", "via", gw,
-                   "dev", g["iface"], "table", str(tid)], timeout=8)
+        shell.run(["ip", "route", "replace", "default", *nh,
+                   "table", str(tid)], timeout=8)
         shell.run(["ip", "rule", "add", "from", src, "table", str(tid),
                    "priority", str(prio)], timeout=8)
 
@@ -350,10 +393,9 @@ def _restore_single_wan(model: dict[str, Any], fallback: dict[str, Any] | None =
         enabled = [g for g in fallback.get("gateways", []) if g.get("enabled")]
     if enabled:
         primary = min(enabled, key=lambda g: (g["tier"], -g["weight"]))
-        gw = _effective_gateway(primary)
-        if gw:
-            shell.run(["ip", "route", "replace", "default", "via", gw,
-                       "dev", primary["iface"]], timeout=10)
+        nh = _nexthop_parts(primary)
+        if nh:
+            shell.run(["ip", "route", "replace", "default", *nh], timeout=10)
     shell.run(["ip", "route", "flush", "cache"], timeout=8)
 
 
@@ -366,7 +408,9 @@ def get_status() -> dict[str, Any]:
         st = _health.get(g["id"], {})
         gws.append({
             **g,
-            "effective_gateway": _effective_gateway(g),
+            "effective_gateway": (_peer_ip(g["iface"]) if _is_ptp(g["iface"])
+                                  else _effective_gateway(g)),
+            "link_type": "pppoe" if _is_ptp(g["iface"]) else "ethernet",
             "src_ip": _src_ip(g["iface"]),
             "up": st.get("up", None),
             "latency_ms": st.get("latency"),
@@ -392,7 +436,12 @@ def _validate(model: dict[str, Any]) -> None:
     seen = set()
     for g in model["gateways"]:
         _v_iface(g["iface"])
-        if live and g["iface"] not in live:
+        if _is_ptp(g["iface"]):
+            # Interfaces pppN são dinâmicas (nascem/moram com a sessão pppd), por
+            # isso não constam na lista de NICs — valida contra os links PPPoE
+            # configurados no painel em vez da lista de interfaces vivas.
+            _validate_ppp_gateway(g)
+        elif live and g["iface"] not in live:
             raise ValueError(f"interface '{g['iface']}' não existe neste appliance")
         if g["iface"] in seen:
             raise ValueError(f"interface '{g['iface']}' duplicada entre gateways")
@@ -408,6 +457,23 @@ def _validate(model: dict[str, Any]) -> None:
             raise ValueError(f"IP de monitoramento inválido: {g['monitor_ip']}")
     if model["enabled"] and len([g for g in model["gateways"] if g["enabled"]]) < 1:
         raise ValueError("habilite ao menos um gateway")
+
+
+def _validate_ppp_gateway(g: dict[str, Any]) -> None:
+    """A pppN gateway must map to an enabled PPPoE link (Interfaces → PPPoE)."""
+    try:
+        from . import pppoe
+        links = pppoe.load_model().get("links", [])
+    except Exception:
+        return  # módulo pppoe indisponível — não bloqueia a configuração
+    if not links:
+        raise ValueError(
+            f"interface '{g['iface']}': nenhum link PPPoE configurado no painel")
+    known = {f"ppp{l.get('unit')}" for l in links if l.get("enabled")}
+    if g["iface"] not in known:
+        raise ValueError(
+            f"interface '{g['iface']}' não corresponde a um link PPPoE habilitado "
+            f"(habilitados: {', '.join(sorted(known)) or 'nenhum'})")
 
 
 def _live_ifaces() -> set[str]:

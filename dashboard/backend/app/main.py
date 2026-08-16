@@ -66,6 +66,10 @@ def _startup() -> None:
         # Multi-WAN monitor (no-op unless the operator enabled it).
         from .services import multiwan as _mw
         _mw.start_monitor()
+        # PPPoE links: install the unit and keep NAT/WAN tracking active links
+        # (no-op unless a PPPoE link is configured).
+        from .services import pppoe as _pppoe
+        _pppoe.start_monitor()
     except Exception:
         pass
 

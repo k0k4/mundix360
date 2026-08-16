@@ -57,6 +57,7 @@ import { ZoneList, ZoneCreate, ZoneEdit } from "./pages/network/zones";
 import { InterfacesPage } from "./pages/network/interfaces";
 import { VlansPage } from "./pages/network/vlans";
 import { MultiWanPage } from "./pages/network/multiwan";
+import { PppoePage } from "./pages/network/pppoe";
 import { WireGuardPage } from "./pages/vpn/wireguard";
 import { OpenVpnPage } from "./pages/vpn/openvpn";
 import { OvpnClientPage } from "./pages/vpn/ovpnclient";
@@ -268,6 +269,15 @@ export default function App() {
               },
             },
             {
+              name: "pppoe",
+              list: "/network/pppoe",
+              meta: {
+                parent: "network-group",
+                label: "PPPoE",
+                icon: <ApiOutlined />,
+              },
+            },
+            {
               name: "zones",
               list: "/network/zones",
               create: "/network/zones/new",
@@ -434,6 +444,7 @@ export default function App() {
                 <Route path="interfaces" element={<InterfacesPage />} />
                 <Route path="vlans" element={<VlansPage />} />
                 <Route path="multiwan" element={<MultiWanPage />} />
+                <Route path="pppoe" element={<PppoePage />} />
                 <Route path="zones" element={<ZoneList />} />
                 <Route path="zones/new" element={<ZoneCreate />} />
                 <Route path="zones/:id/edit" element={<ZoneEdit />} />
