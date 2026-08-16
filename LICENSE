@@ -14,6 +14,10 @@ Copyright (c) 2026 Lucieliton Mundim
 "Appliance" — cada instalação ativa do Software em produção (máquina física
               ou virtual) operada como firewall/UTM para uma rede.
 
+"Usuários"  — as pessoas ou dispositivos finais atendidos/protegidos por um
+              Appliance (ex.: estações de trabalho, servidores, celulares e
+              demais dispositivos da rede por ele protegida).
+
 "Uso Comercial" — qualquer uso do Software, direto ou indireto, em benefício
               de organização com fins lucrativos, incluindo operar o Software
               como serviço para terceiros (MSP, hospedagem, consultoria).
@@ -30,18 +34,19 @@ intransferível para usar, copiar, estudar, modificar e redistribuir o
 Software, desde que o uso se enquadre em AO MENOS UMA das condições abaixo:
 
   a) USO NÃO COMERCIAL — uso pessoal, doméstico, educacional, acadêmico, de
-     pesquisa ou avaliação, sem fins lucrativos. Não há limite de Appliances.
+     pesquisa ou avaliação, sem fins lucrativos. Sem limite de Appliances
+     nem de Usuários.
 
-  b) USO COMERCIAL ATÉ 50 APPLIANCES — Uso Comercial gratuito enquanto o
-     TOTAL de Appliances em produção operados por você (ou pela sua
-     organização, incluindo clientes atendidos com o Software) não exceder
-     50 (cinquenta) unidades.
+  b) USO COMERCIAL — ATÉ 50 USUÁRIOS POR APPLIANCE — Uso Comercial gratuito
+     em cada Appliance que atenda a no máximo 50 (cinquenta) Usuários.
+     Não há limite de quantidade de Appliances dentro dessa condição.
 
 --------------------------------------------------------------------------------
-3. USO COMERCIAL ACIMA DE 50 APPLIANCES
+3. APPLIANCES COM MAIS DE 50 USUÁRIOS
 --------------------------------------------------------------------------------
-Exceder 50 (cinquenta) Appliances em produção exige licença comercial
-específica, a ser negociada com o autor. Contato: +55 62 98438-4774.
+Cada Appliance que atenda a MAIS de 50 (cinquenta) Usuários em Uso Comercial
+exige licença comercial específica para aquele Appliance, a ser negociada
+com o autor. Contato: +55 62 98438-4774.
 
 --------------------------------------------------------------------------------
 4. CONDIÇÕES OBRIGATÓRIAS (valem para qualquer uso, cópia ou redistribuição)
@@ -79,8 +84,13 @@ aplica-se apenas às partes autorais do Mundix Security 360 e não altera as
 licenças desses componentes.
 
 --------------------------------------------------------------------------------
-7. GARANTIAS E RESPONSABILIDADE
+7. ESTADO DO PROJETO, GARANTIAS E RESPONSABILIDADE
 --------------------------------------------------------------------------------
+O MUNDIX SECURITY 360 ESTÁ EM FASE INICIAL DE DESENVOLVIMENTO. Bugs estão
+sendo reportados e corrigidos continuamente; comportamentos podem mudar
+entre versões. Recomenda-se cautela: teste antes de implantar, mantenha
+backups e avalie o risco antes de usar em ambientes de produção críticos.
+
 O SOFTWARE É FORNECIDO "NO ESTADO EM QUE SE ENCONTRA", SEM GARANTIA DE
 QUALQUER TIPO, EXPRESSA OU IMPLÍCITA, INCLUINDO, SEM LIMITAÇÃO, GARANTIAS
 DE COMERCIABILIDADE, ADEQUAÇÃO A UM FIM ESPECÍFICO E NÃO VIOLAÇÃO. EM
@@ -98,6 +108,6 @@ automaticamente os direitos concedidos. As Seções 4, 6, 7 e 8 sobrevivem
 
 ================================================================================
 Resumo informal (não substitui o texto acima): uso não comercial é livre e
-gratuito; uso comercial é gratuito até 50 appliances; nunca remova os
-créditos do autor.
+gratuito; uso comercial é gratuito em appliances com até 50 usuários cada;
+nunca remova os créditos do autor.
 ================================================================================

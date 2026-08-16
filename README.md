@@ -5,8 +5,16 @@ WAF, VPNs, filtro de conteúdo, SIEM e assistente de IA, com instalação
 desatendida via ISO e menu de console de recuperação estilo pfSense.
 
 > **Mundix Security 360** — Projeto de **Lucieliton Mundim** · +55 62 98438-4774
-> Licença: uso **não comercial livre** e **comercial gratuito até 50 appliances**
-> — leia [LICENSE](LICENSE). É proibido remover os créditos do autor.
+> Licença: uso **não comercial livre** e **comercial gratuito em appliances com
+> até 50 usuários cada** — leia [LICENSE](LICENSE). É proibido remover os
+> créditos do autor.
+
+> ⚠️ **Estado do projeto: FASE INICIAL.** O Mundix Security 360 está em
+> desenvolvimento ativo — bugs estão sendo reportados e corrigidos
+> continuamente, e comportamentos podem mudar entre versões. **Use com
+> cautela**: teste antes de implantar, mantenha backups e avalie o risco
+> antes de colocar em produção crítica. Encontrou um problema? Abra uma
+> [issue](https://github.com/k0k4/mundix360/issues).
 
 ---
 
@@ -187,8 +195,9 @@ A versão e a lista de pacotes/units vêm de `installer/manifest.env`.
 
 Este projeto é **source-available** sob licença própria — veja [LICENSE](LICENSE):
 
-- **Uso não comercial**: livre e gratuito, sem limite de appliances.
-- **Uso comercial**: gratuito até **50 appliances** em produção; acima disso, fale com o autor.
+- **Uso não comercial**: livre e gratuito, sem limite de appliances nem usuários.
+- **Uso comercial**: gratuito em cada appliance que atenda **até 50 usuários**;
+  appliances com mais de 50 usuários exigem licença comercial — fale com o autor.
 - **Créditos obrigatórios**: é proibido remover ou ocultar a identificação
   *"Mundix Security 360 — Projeto de Lucieliton Mundim · +55 62 98438-4774"*
   do código, da documentação e das interfaces do software.
