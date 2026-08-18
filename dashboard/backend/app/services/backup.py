@@ -35,7 +35,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, BinaryIO
 
 import httpx
 
@@ -48,6 +48,7 @@ BACKUP_DIR = os.path.join(settings.base_dir, "backups")
 STAGING_DIR = os.path.join(BACKUP_DIR, "staging")
 LOCK_PATH = os.path.join(BACKUP_DIR, ".lock")
 MIN_FREE_BYTES = 300 * 1024 * 1024  # never start a backup below this free space
+MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024  # ceiling for imports via the UI
 MODEL_PATH = os.path.join(settings.base_dir, "dashboard/backend/data/backup.json")
 DATA_DIR = os.path.join(settings.base_dir, "dashboard/backend/data")
 PREFIX = "mundix-backup-"
@@ -404,6 +405,82 @@ def delete_backup(name: str) -> dict[str, Any]:
         if os.path.exists(marker):
             os.unlink(marker)
     return {"ok": True, "deleted": name}
+
+
+def _check_import_manifest(path: str) -> None:
+    """Light post-write validation: must be a readable .tar.gz with a
+    manifest.json that parses to a dict containing a ``contents`` list.
+    The full (expensive) verify_backup stays an explicit operator action."""
+    invalid = ValueError("não parece um backup mundix360 (manifest.json ausente/inválido)")
+    try:
+        with tarfile.open(path, "r:gz") as tar:
+            if "manifest.json" not in tar.getnames():
+                raise invalid
+            member = tar.extractfile("manifest.json")
+            if member is None:
+                raise invalid
+            manifest = json.loads(member.read().decode())
+    except (tarfile.TarError, OSError, EOFError, UnicodeDecodeError,
+            json.JSONDecodeError, AttributeError):
+        raise invalid
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("contents"), list):
+        raise invalid
+
+
+def import_backup(filename: str, stream: BinaryIO) -> dict[str, Any]:
+    """Import an external .tar.gz (e.g. a backup from another appliance).
+
+    Files whose name doesn't match the appliance convention are stored as
+    ``mundix-backup-import-<utc>.tar.gz``; an existing backup is never
+    overwritten. Once imported, the archive joins the normal listing and
+    follows the usual flow (verify/extract from the UI, restore via CLI).
+    """
+    base = os.path.basename(filename or "")
+    if not base:
+        raise ValueError("nome de arquivo inválido")
+    renamed = not (base.startswith(PREFIX) and base.endswith(".tar.gz"))
+    if renamed:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        base = f"{PREFIX}import-{ts}.tar.gz"
+    path = _safe_path(base)
+
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    if os.path.exists(path):
+        raise FileExistsError(f"já existe um backup com o nome {base}")
+    free = shutil.disk_usage(BACKUP_DIR).free
+    if free < MIN_FREE_BYTES:
+        raise RuntimeError(
+            f"espaço em disco insuficiente: {free // (1024*1024)}MB livres, "
+            f"necessário ~{MIN_FREE_BYTES // (1024*1024)}MB")
+
+    tmp = path + ".part"
+    size = 0
+    ok = False
+    try:
+        with open(tmp, "wb") as out:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_IMPORT_BYTES:
+                    raise ValueError("arquivo grande demais (limite: 4 GiB)")
+                out.write(chunk)
+        _check_import_manifest(tmp)
+        ok = True
+    finally:
+        if not ok:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    os.replace(tmp, path)
+    # O arquivo contém segredos (chap/pap-secrets, chaves VPN): restringe.
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return {"ok": True, "name": base, "renamed": renamed, "size": size}
 
 
 def extract_to_staging(name: str) -> dict[str, Any]:

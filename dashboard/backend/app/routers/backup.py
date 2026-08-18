@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -32,6 +32,18 @@ def run():
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+
+@router.post("/import")
+def import_(file: UploadFile = File(...)):
+    try:
+        return backup.import_backup(file.filename, file.file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.post("/verify/{name}")

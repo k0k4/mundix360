@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Table, Tag, Card, Row, Col, Alert, Typography, Spin, Button, Tooltip,
-  Form, Switch, InputNumber, Modal, message, Space, Descriptions,
+  Form, Switch, InputNumber, Modal, message, Space, Descriptions, Upload,
 } from "antd";
 import {
   ReloadOutlined, CloudDownloadOutlined, DeleteOutlined, SafetyCertificateOutlined,
   CheckCircleFilled, CloseCircleFilled, DatabaseOutlined, ClockCircleOutlined,
-  PlayCircleOutlined, FolderOpenOutlined,
+  PlayCircleOutlined, FolderOpenOutlined, UploadOutlined,
 } from "@ant-design/icons";
 import { api } from "../../api";
 import { PageHeader, KpiCard } from "../../components/ui";
@@ -26,6 +26,7 @@ export function BackupPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
@@ -60,6 +61,26 @@ export function BackupPage() {
     } finally {
       setRunning(false);
     }
+  };
+
+  const importBackup = async (file: File) => {
+    setImporting(true);
+    const hide = message.loading("Enviando backup…", 0);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/api/backup/import", fd);
+      hide();
+      if (data.renamed) message.success(`Importado como ${data.name}`);
+      else message.success(`Backup importado: ${data.name}`);
+      load();
+    } catch (e: any) {
+      hide();
+      message.error(e?.response?.data?.detail || "Falha ao importar backup");
+    } finally {
+      setImporting(false);
+    }
+    return false;
   };
 
   const verify = async (name: string) => {
@@ -158,6 +179,9 @@ export function BackupPage() {
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>Atualizar</Button>
+            <Upload accept=".tar.gz,.tgz" showUploadList={false} beforeUpload={importBackup}>
+              <Button icon={<UploadOutlined />} loading={importing}>Importar</Button>
+            </Upload>
             <Button type="primary" icon={<PlayCircleOutlined />} loading={running} onClick={runNow}>
               Gerar backup agora
             </Button>
