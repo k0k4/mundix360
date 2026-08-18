@@ -24,6 +24,11 @@ import { PartitionOutlined } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { ListTitle } from "../../components/ui";
+import {
+  deriveNetwork,
+  derivePool,
+  prefixToMask,
+} from "./ipmath";
 
 const { Text } = Typography;
 
@@ -67,26 +72,6 @@ const NETMASKS = [
   { value: "255.255.0.0", label: "/16 · 255.255.0.0 (65534 hosts)" },
   { value: "255.0.0.0", label: "/8 · 255.0.0.0" },
 ];
-
-function maskToPrefix(mask?: string): number | null {
-  if (!mask) return null;
-  const parts = mask.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return null;
-  const bits = parts.map((n) => n.toString(2).padStart(8, "0")).join("");
-  if (!/^1*0*$/.test(bits)) return null;
-  return bits.split("").filter((b) => b === "1").length;
-}
-
-function deriveNetwork(ip?: string, mask?: string): string | null {
-  const prefix = maskToPrefix(mask);
-  if (!ip || prefix == null) return null;
-  const ipParts = ip.split(".").map(Number);
-  const maskParts = mask!.split(".").map(Number);
-  if (ipParts.length !== 4 || ipParts.some((n) => Number.isNaN(n) || n > 255))
-    return null;
-  const net = ipParts.map((n, i) => n & maskParts[i]).join(".");
-  return `${net}/${prefix}`;
-}
 
 export const ZoneList = () => {
   const { tableProps } = useTable({ resource: "zones", syncWithLocation: false });
@@ -186,6 +171,7 @@ const NetworkHint = () => {
 
 const ZoneFormFields = () => {
   const { ifaces, loading } = useInterfaces();
+  const form = Form.useFormInstance();
   const options = ifaces.map((i) => {
     const meta: string[] = [];
     if (i.address) meta.push(i.address);
@@ -196,6 +182,26 @@ const ZoneFormFields = () => {
       label: `${i.interface}${i.is_wan ? " (WAN)" : ""}${suffix}`,
     };
   });
+  // Pre-fill addressing from the selected interface, but ONLY empty fields —
+  // never overwrite what the operator typed. Makes the default DHCP pool
+  // visible on screen instead of hidden magic.
+  const onIfaceChange = (name: string) => {
+    const i = ifaces.find((x) => x.interface === name);
+    const cidr = i?.address || i?.addresses?.[0];
+    const [ip, p] = (cidr || "").split("/");
+    const mask = prefixToMask(Number(p));
+    if (!ip || !mask) return;
+    const patch: Record<string, string> = {};
+    if (!form.getFieldValue("listen_address")) patch.listen_address = ip;
+    if (!form.getFieldValue("netmask")) patch.netmask = mask;
+    if (!form.getFieldValue("gateway")) patch.gateway = ip;
+    const pool = derivePool(ip, mask);
+    if (pool) {
+      if (!form.getFieldValue("dhcp_start")) patch.dhcp_start = pool[0];
+      if (!form.getFieldValue("dhcp_end")) patch.dhcp_end = pool[1];
+    }
+    if (Object.keys(patch).length) form.setFieldsValue(patch);
+  };
   return (
     <>
       <Divider orientation="left" plain>
@@ -216,6 +222,7 @@ const ZoneFormFields = () => {
               placeholder={loading ? "Detectando interfaces…" : "Selecione a interface"}
               notFoundContent={loading ? "Detectando…" : "Nenhuma interface detectada"}
               optionFilterProp="label"
+              onChange={onIfaceChange}
             />
           </Form.Item>
         </Col>

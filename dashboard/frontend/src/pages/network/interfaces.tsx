@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Table, Tag, Card, Row, Col, Select, Button, Space, Typography, Alert,
   Tooltip, Drawer, Form, Input, InputNumber, Switch, Segmented, Divider,
-  Popconfirm, message as antdMessage,
+  Popconfirm, Modal, message as antdMessage,
 } from "antd";
 import {
   ApiOutlined, GlobalOutlined, PartitionOutlined, ReloadOutlined,
@@ -10,6 +10,7 @@ import {
 } from "@ant-design/icons";
 import { api } from "../../api";
 import { PageHeader, KpiCard } from "../../components/ui";
+import { derivePool, prefixToMask } from "./ipmath";
 
 const { Text } = Typography;
 
@@ -128,6 +129,39 @@ export const InterfacesPage = () => {
     });
   };
 
+  // Product decision: DHCP comes up by default on the LAN. After a static IP
+  // is saved on an interface with no zone, offer to create the 'lan' zone with
+  // a default pool in the same flow (adjustable later in Rede › Zonas).
+  const offerLanZone = (iface: string, cidr: string) => {
+    const [ip, p] = (cidr || "").split("/");
+    const mask = prefixToMask(Number(p));
+    const pool = ip && mask ? derivePool(ip, mask) : null;
+    if (!ip || !mask || !pool) return; // can't derive a sane pool — skip the offer
+    Modal.confirm({
+      title: `Criar zona 'lan' em ${iface}?`,
+      content: `IP estático salvo. Subir DHCP padrão nesta rede (pool ${pool[0]} → ${pool[1]}, gateway ${ip})? Você pode ajustar ou desativar depois em Rede › Zonas.`,
+      okText: "Criar zona",
+      cancelText: "Agora não",
+      onOk: async () => {
+        try {
+          await api.post("/api/network/zones", {
+            zone: "lan",
+            interface: iface,
+            listen_address: ip,
+            gateway: ip,
+            netmask: mask,
+            dhcp_start: pool[0],
+            dhcp_end: pool[1],
+          });
+          msg.success("Zona 'lan' criada — DHCP ativo nesta interface");
+          load();
+        } catch (e: any) {
+          msg.error(e?.response?.data?.detail || "Falha ao criar a zona");
+        }
+      },
+    });
+  };
+
   const submitEdit = async () => {
     if (!editing) return;
     const v = await form.validateFields();
@@ -143,8 +177,12 @@ export const InterfacesPage = () => {
         mtu: v.mtu || null,
       });
       msg.success(`${editing.interface} atualizada`);
+      const noZone = editing.role !== "zone" && editing.role !== "wan" && !editing.is_wan;
       setEditing(null);
       load();
+      if (v.ipv4_mode === "static" && noZone) {
+        offerLanZone(editing.interface, v.address);
+      }
     } catch (e: any) {
       msg.error(e?.response?.data?.detail || "Falha ao salvar (revertido)");
     } finally {

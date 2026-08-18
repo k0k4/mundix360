@@ -6,6 +6,7 @@ validated with `dnsmasq --test` before reloading the service.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 import threading
@@ -224,7 +225,46 @@ def _validate_zone(z: dict[str, Any]) -> None:
         raise ValueError("informe início e fim do pool DHCP (ou nenhum)")
 
 
+def _lan_dhcp_default(z: dict[str, Any]) -> None:
+    """Product decision: DHCP comes up by default on the LAN zone. On create,
+    when the operator left the pool empty, derive it from the subnet
+    (network+10 .. broadcast-5) and default the gateway to the appliance IP.
+    The operator can later edit the zone and clear the pool (DHCP off).
+    Updates (create=False) always respect the operator's values."""
+    if z.get("zone") != "lan" or z.get("dhcp_start") or z.get("dhcp_end"):
+        return
+    listen = z.get("listen_address")
+    if not listen:
+        return
+    try:
+        net = ipaddress.ip_network(
+            f"{listen}/{z.get('netmask') or '255.255.255.0'}", strict=False)
+    except ValueError:
+        return
+    start, end = net.network_address + 10, net.broadcast_address - 5
+    if start >= end:
+        return  # subnet too small for a useful default pool — leave DHCP off
+    z["dhcp_start"], z["dhcp_end"] = str(start), str(end)
+    if not z.get("gateway"):
+        z["gateway"] = listen
+
+
+def _apply_firewall() -> None:
+    """Re-render the managed nftables ruleset: the per-zone DNS (53) / DHCP (67)
+    openings come from the fwmanage render over the live zones, so zone CRUD
+    must trigger it — otherwise they only appear when something else applies
+    the model. Never propagates: a zone change must not fail because of nft."""
+    try:
+        from . import fwmanage
+        fwmanage.apply_model(fwmanage.load_model())
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "firewall re-render after zone change failed", exc_info=True)
+
+
 def save_zone(z: dict[str, Any], *, create: bool) -> dict[str, Any]:
+    if create:
+        _lan_dhcp_default(z)
     _validate_zone(z)
     with config_lock:
         path = _zone_path(z["zone"])
@@ -247,6 +287,8 @@ def save_zone(z: dict[str, Any], *, create: bool) -> dict[str, Any]:
                 _atomic_write(path, prev)
             _validate_and_reload()
             raise ValueError(f"dnsmasq rejected config: {reload_result['error']}")
+    # dnsmasq accepted the zone; open its DNS/DHCP ports in the firewall.
+    _apply_firewall()
     return get_zone(z["zone"]) or z
 
 
@@ -260,6 +302,8 @@ def delete_zone(name: str) -> dict[str, Any]:
         if os.path.isfile(path):
             os.remove(path)
         reload = _validate_and_reload()
+    # Zone removed; close its DNS/DHCP ports in the firewall.
+    _apply_firewall()
     return {"ok": reload["ok"], "zone": name}
 
 
