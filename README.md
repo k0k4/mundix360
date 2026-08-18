@@ -85,7 +85,7 @@ Código em `/opt/mundix360`, configurações de estado em `/etc/mundix` e
 
 ## Requisitos
 
-- **CPU x86_64 com AVX** (o ClickHouse atual exige AVX — verifique com `grep -o avx /proc/cpuinfo`)
+- **CPU x86_64** — o ClickHouse atual exige **AVX** (verifique com `grep -o avx /proc/cpuinfo`); em CPU sem AVX o instalador pina automaticamente o ClickHouse na série legada 22.3 (SIEM em versão legada)
 - **2+ interfaces de rede** (WAN + LAN); mais NICs permitem DMZ/WAN2
 - **4 GB RAM** mínimo (8 GB recomendado), **20 GB** de disco
 - Ubuntu Server **24.04 LTS** (a ISO já inclui a base)
@@ -129,7 +129,8 @@ sudo apt update && sudo apt install mundix360
 ```bash
 git clone https://github.com/k0k4/mundix360.git /opt/mundix360
 cd /opt/mundix360/installer
-sudo ./install.sh            # modo online (baixa pacotes)
+sudo ./install.sh --online   # baixa os pacotes da internet (requer Ubuntu 24.04 online)
+# sem a flag, o padrão é --offline e exige o bundle (.tar.zst) descompactado
 # flags úteis: --skip-apt (só reconfigura) | --upgrade | --yes (não interativo)
 ```
 

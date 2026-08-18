@@ -7,6 +7,11 @@ observability profile. Tails Suricata's EVE JSON log, keeps only
 batch-inserts them into ClickHouse. A persisted byte offset lets the service
 resume after a restart, and inode/size checks handle log rotation.
 
+Nothing else in the project creates the ClickHouse database/table, so on
+startup the ingester bootstraps them itself (``CREATE ... IF NOT EXISTS``,
+idempotent, ClickHouse 22.3-compatible MergeTree) — self-healing on fresh
+installs and after data wipes.
+
 Runs under the appliance venv (clickhouse_connect) as the
 ``mundix-siem-ingest`` systemd service.
 """
@@ -53,6 +58,26 @@ _COLUMNS = [
     "description", "full_log", "action_taken", "false_positive",
     "triage_notes", "tags",
 ]
+
+# Bootstrap DDL — exact match with _COLUMNS (23 columns). Plain MergeTree keeps
+# it compatible with ClickHouse 22.3 (the pinned series for CPUs without AVX).
+_SCHEMA_DDL = f"""
+CREATE TABLE IF NOT EXISTS {CH_DB}.{TABLE} (
+  event_id UUID, timestamp DateTime,
+  source String, source_type String,
+  rule_id String, rule_name String,
+  severity UInt8, category String,
+  mitre_tactic String, mitre_technique String,
+  src_ip String, dst_ip String,
+  src_port UInt16, dst_port UInt16,
+  protocol String, hostname String,
+  `user` String, description String, full_log String,
+  action_taken String, false_positive UInt8,
+  triage_notes String, tags Array(String)
+) ENGINE = MergeTree
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (timestamp, event_id)
+"""
 
 _running = True
 
@@ -160,6 +185,12 @@ def _connect():
     )
 
 
+def _ensure_schema(client) -> None:
+    """Create the database/table if missing (nothing else in the project does)."""
+    client.query(f"CREATE DATABASE IF NOT EXISTS {CH_DB}")
+    client.query(_SCHEMA_DDL)
+
+
 def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -172,6 +203,14 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - retry until ClickHouse is up
             log(f"waiting for ClickHouse: {exc}")
             client = None
+            time.sleep(5)
+
+    while _running:
+        try:
+            _ensure_schema(client)
+            break
+        except Exception as exc:  # noqa: BLE001 - transient; systemd restarts us
+            log(f"schema bootstrap failed, retrying: {exc}")
             time.sleep(5)
 
     log(f"ingester started; following {EVE_PATH}")

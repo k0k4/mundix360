@@ -34,7 +34,7 @@ apt-get update 2>/dev/null || warn "apt-get update com avisos (repos de terceiro
 mapfile -t CLOSURE < <(
   apt-cache depends --recurse --no-recommends --no-suggests \
     --no-conflicts --no-breaks --no-replaces --no-enhances \
-    "${APT_PACKAGES[@]}" 2>/dev/null | grep -E '^[a-zA-Z0-9]' | sort -u
+    "${APT_PACKAGES[@]}" "${APT_PACKAGES_NONCRIT[@]}" 2>/dev/null | grep -E '^[a-zA-Z0-9]' | sort -u
 )
 log "fecho de dependências: ${#CLOSURE[@]} pacotes"
 (

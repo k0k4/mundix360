@@ -13,7 +13,11 @@ instala o Ubuntu, traz o código para a máquina e roda **um único comando**.
 - **Ubuntu Server 24.04 LTS** já instalado no equipamento.
 - **Acesso à internet** na máquina (o instalador baixa pacotes).
 - Usuário com **sudo** (ou root).
-- **Recomendado:** ≥ 4 GB RAM, ≥ 20 GB de disco livre, CPU x86-64 (amd64).
+- **CPU x86-64 (amd64) com AVX** — o ClickHouse atual (SIEM) exige AVX.
+  Verifique com `grep -o avx /proc/cpuinfo`. **Sem AVX** (ex.: Celeron/Atom
+  antigos) o instalador pina automaticamente o ClickHouse na série legada
+  **22.3** e o SIEM roda nessa versão — todo o restante funciona igual.
+- **Recomendado:** ≥ 4 GB RAM, ≥ 20 GB de disco livre.
 - Pelo menos **1 interface de rede** já com IP (para você acessar a máquina).
   Quantas interfaces o hardware tiver (2, 4, 6…), o Mundix detecta sozinho — não
   há nada hardcoded.
@@ -24,6 +28,7 @@ Confira o sistema:
 . /etc/os-release && echo "$ID $VERSION_ID"   # esperado: ubuntu 24.04
 ping -c1 8.8.8.8                               # internet OK?
 ip -4 addr show scope global                   # qual IP a máquina tem?
+grep -o avx /proc/cpuinfo | head -1            # esperado: avx (sem ele, SIEM em 22.3 legado)
 ```
 
 ---
@@ -109,7 +114,8 @@ Com `--yes` e **sem** `--master-password`, uma senha aleatória é gerada e
 5. **Publica o painel em todas as interfaces** (`0.0.0.0:80/443`) — você acessa
    por qualquer IP da máquina, sem precisar adivinhar qual placa é a LAN.
 6. Sobe e **verifica** cada serviço; se algo crítico falhar, mostra o diagnóstico.
-7. Define a senha mestra e imprime o **relatório final** com as portas abertas.
+7. Define a senha mestra, **cria o usuário `admin` do painel** com ela e imprime
+   o **relatório final** com as portas abertas.
 
 ### Opções úteis
 
@@ -134,8 +140,11 @@ https://<IP-do-servidor>
 
 - Aceite o aviso de certificado (é um certificado self-signed gerado na hora).
 - Também funciona em `http://<IP-do-servidor>`.
-- **Usuário:** `admin`
-- **Senha:** a senha mestra que você definiu (ou a gerada no relatório).
+- **Usuário:** `admin` — a conta é criada pelo próprio instalador.
+- **Senha:** a senha mestra que você definiu (ou a gerada no relatório final).
+
+> Se o login falhar com 401 (ex.: instalação feita antes desta correção), crie
+> a conta manualmente: `cd /opt/mundix360/dashboard/backend && sudo /opt/venv/bin/python -m app.admin create-admin admin`
 
 ---
 

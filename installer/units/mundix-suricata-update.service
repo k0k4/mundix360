@@ -9,4 +9,6 @@ Type=oneshot
 User=root
 # Baixa/recompila o ruleset ET Open e recarrega a engine sem reiniciar o serviço.
 ExecStart=/usr/bin/suricata-update --suricata-version 7.0.3 --no-test
-ExecStartPost=/usr/bin/suricatasc -c reload-rules
+# O "-" torna o reload tolerante a socket ausente (Suricata parado/fora do ar):
+# sem isso a unit falha inteira mesmo com as regras atualizadas com sucesso.
+ExecStartPost=-/usr/bin/suricatasc -c reload-rules

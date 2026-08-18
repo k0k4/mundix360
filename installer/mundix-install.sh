@@ -94,6 +94,14 @@ start_verify() {
   if systemctl restart "$unit" >>"$LOG" 2>&1; then
     sleep 1
     if systemctl is-active --quiet "$unit"; then ok "ativo: $unit"; return 0; fi
+    # Units Type=oneshot (ex.: mundix-triage) terminam e voltam a "inactive":
+    # sucesso é Result=success, não is-active. Sem isto seriam falso negativo.
+    local utype uresult
+    utype="$(systemctl show -p Type --value "$unit" 2>/dev/null)"
+    uresult="$(systemctl show -p Result --value "$unit" 2>/dev/null)"
+    if [[ "$utype" == "oneshot" && "$uresult" == "success" ]]; then
+      ok "concluído (oneshot): $unit"; return 0
+    fi
   fi
   warn "serviço não subiu: $unit (veja journalctl -u $unit)"
   { echo "----- journal $unit -----"; journalctl -u "$unit" --no-pager -n 25 2>&1; } >>"$LOG" || true
@@ -115,6 +123,19 @@ phase_preflight() {
     confirm "Continuar mesmo assim?" || die "abortado pelo operador."
   else
     ok "SO ${id} ${ver}"
+  fi
+
+  # CPU sem AVX: o ClickHouse >= 22.8 exige AVX e o postinst morre com SIGILL
+  # (exit 132). Pinamos a série 22.3 (última compatível, validada com o
+  # clickhouse-connect do venv) para o SIEM subir em versão legada.
+  if grep -qw avx /proc/cpuinfo; then
+    ok "CPU com AVX"
+  elif [[ -e /etc/apt/preferences.d/mundix-clickhouse-noavx ]]; then
+    log "CPU sem AVX — pin de ClickHouse já existe (mantido): /etc/apt/preferences.d/mundix-clickhouse-noavx"
+  else
+    printf 'Package: clickhouse-server clickhouse-common-static clickhouse-client\nPin: version 22.3.*\nPin-Priority: 1001\n' \
+      > /etc/apt/preferences.d/mundix-clickhouse-noavx
+    warn "CPU sem AVX — ClickHouse pinado na série legada 22.3 (o SIEM rodará em versão legada)."
   fi
 
   log "verificando internet…"
@@ -194,6 +215,19 @@ phase_apt() {
     "${APT_PACKAGES[@]}" "${extra[@]}" >>"$LOG" 2>&1 \
     || die "falha ao instalar pacotes APT (veja ${LOG})"
   ok "pacotes instalados"
+
+  # Não-críticos (dados/SIEM), um a um: a falha NÃO aborta a instalação
+  # (ex.: ClickHouse >= 22.8 exige AVX e o postinst morre com SIGILL em CPU
+  # sem AVX). Registrados em FAILED_NONCRIT para o relatório final.
+  local p
+  for p in "${APT_PACKAGES_NONCRIT[@]}"; do
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$p" >>"$LOG" 2>&1; then
+      ok "pacote não-crítico instalado: $p"
+    else
+      warn "pacote não-crítico falhou: $p — a instalação continua (veja ${LOG})."
+      FAILED_NONCRIT+=("$p")
+    fi
+  done
 }
 
 # ------------------------------------------------------------- fase: python ----
@@ -232,6 +266,18 @@ _seed() {  # origem destino [modo]
   install -D -m "$mode" "$src" "$dst"; ok "config semeada: $dst"
 }
 
+# O mundix-lowpower.xml usa chaves de logs introduzidas depois do 22.3
+# (backup_log, filesystem_cache_log, asynchronous_insert_log,
+# processors_profile_log...). Como CPUs sem AVX são pinadas no 22.3 (ver
+# phase_preflight), o seed só é seguro com ClickHouse >= 23 instalado.
+_clickhouse_ge_23() {
+  local ver major
+  ver="$(dpkg-query -W -f='${Version}' clickhouse-server 2>/dev/null)" || return 1
+  major="${ver%%.*}"
+  [[ "$major" =~ ^[0-9]+$ ]] || return 1
+  (( major >= 23 ))
+}
+
 phase_config() {
   step "Configuração base"
   local cfg="${INSTALLER_DIR}/config"
@@ -254,11 +300,37 @@ phase_config() {
   # dnsmasq base (DNS/DHCP + filtro de conteúdo é escrito em runtime pela app).
   if [[ -d "${cfg}/dnsmasq-base" ]]; then
     install -d -m 0755 /etc/dnsmasq.d
-    install -d -m 0755 /var/log/dnsmasq   # log-facility referenciado em 00-global.conf
+    # log-facility referenciado em 00-global.conf — dono como em lib/50-config.sh.
+    install -d -o dnsmasq -g nogroup -m 0755 /var/log/dnsmasq
     local f
     for f in "${cfg}/dnsmasq-base"/*; do
       [[ -e "$f" ]] && _seed "$f" "/etc/dnsmasq.d/$(basename "$f")"
     done
+    # Upstreams de DNS: o 00-global.conf tem `no-resolv` — sem `server=` a
+    # caixa fica sem resolver nada quando o systemd-resolved é desligado em
+    # phase_services. Semeia defaults públicos, sem sobrescrever o operador.
+    if [[ ! -e /etc/dnsmasq.d/mundix-dns-resolvers.conf ]]; then
+      printf 'server=1.1.1.1\nserver=9.9.9.9\n' > /etc/dnsmasq.d/mundix-dns-resolvers.conf
+      ok "upstreams DNS semeados: /etc/dnsmasq.d/mundix-dns-resolvers.conf"
+    fi
+  fi
+
+  # ClickHouse: perfil de baixo consumo (como em lib/50-config.sh). Só semeia
+  # com ClickHouse >= 23: no 22.3 (pin de CPU sem AVX) várias chaves do XML
+  # são desconhecidas e o seed não é seguro.
+  if [[ -f "${cfg}/clickhouse/mundix-lowpower.xml" && -d /etc/clickhouse-server/config.d ]]; then
+    if [[ ! -e /etc/clickhouse-server/config.d/mundix-lowpower.xml ]]; then
+      if _clickhouse_ge_23; then
+        _seed "${cfg}/clickhouse/mundix-lowpower.xml" \
+          /etc/clickhouse-server/config.d/mundix-lowpower.xml 0640
+        # "|| warn": se o ClickHouse ficou meio-instalado (postinst falhou), o
+        # usuário pode não existir — e isso não pode abortar o instalador.
+        chown clickhouse:clickhouse /etc/clickhouse-server/config.d/mundix-lowpower.xml \
+          || warn "chown do lowpower.xml falhou (usuário clickhouse ausente?)"
+      else
+        log "ClickHouse < 23 (ou versão indetectável): mundix-lowpower.xml NÃO semeado."
+      fi
+    fi
   fi
 
   # Seeds do manifesto (ex.: openrouter.env a partir do exemplo).
@@ -268,6 +340,19 @@ phase_config() {
     src="${MUNDIX_ROOT}/${pair%%::*}"; dst="${pair##*::}"
     [[ -e "$src" ]] && _seed "$src" "$dst" 0640
   done
+
+  # Menu de console de recuperação + export HTTP (como em lib/50-config.sh).
+  if [[ -f "${MUNDIX_ROOT}/scripts/setup/mundix-menu.sh" ]]; then
+    ln -sf "${MUNDIX_ROOT}/scripts/setup/mundix-menu.sh" /usr/local/bin/mundix-menu
+    chmod 0755 "${MUNDIX_ROOT}/scripts/setup/mundix-menu.sh"
+    install -D -m 0644 "${MUNDIX_ROOT}/scripts/setup/mundix-menu.profile" /etc/profile.d/mundix-menu.sh
+    ok "menu de console instalado (/usr/local/bin/mundix-menu)"
+  fi
+  if [[ -f "${MUNDIX_ROOT}/scripts/setup/mundix-export.sh" ]]; then
+    ln -sf "${MUNDIX_ROOT}/scripts/setup/mundix-export.sh" /usr/local/bin/mundix-export
+    chmod 0755 "${MUNDIX_ROOT}/scripts/setup/mundix-export.sh"
+    ok "export instalado (/usr/local/bin/mundix-export)"
+  fi
 
   # Encaminhamento de pacotes (firewall roteia entre zonas).
   echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-mundix-forward.conf
@@ -371,6 +456,30 @@ _waf_selftest() {
   fi
 }
 
+# Mesma lógica de installer/lib/70-firstboot.sh: o Suricata (af-packet) precisa
+# escutar numa interface que exista NESTE hardware (o default da distro é eth0,
+# inexistente na maioria dos minipcs). Roda ANTES de subir os serviços.
+_detect_nics() {
+  # Lista NICs físicas reais (exclui lo/virtuais), sem qualquer hardcode.
+  ip -o link show 2>/dev/null | awk -F': ' '{print $2}' \
+    | grep -vE '^(lo|veth|docker|br-|vnet|tun|tap|wg|virbr)' \
+    | sed 's/@.*//' | sort -u
+}
+
+_fix_suricata_iface() {
+  local yaml=/etc/suricata/suricata.yaml
+  [[ -f "$yaml" ]] || return 0
+  local cur
+  cur="$(awk '/^af-packet:/{getline; if ($0 ~ /interface:/) {gsub(/.*interface:[[:space:]]*/,""); gsub(/[[:space:]].*/,""); print; exit}}' "$yaml")"
+  [[ -z "$cur" ]] && return 0
+  [[ -e "/sys/class/net/$cur" ]] && return 0
+  local nics
+  mapfile -t nics < <(_detect_nics)
+  (( ${#nics[@]} > 0 )) || return 0
+  sed -i "0,/^\([[:space:]]*- interface:\)[[:space:]]*${cur}/s//\1 ${nics[0]}/" "$yaml"
+  ok "suricata: af-packet ${cur} → ${nics[0]}"
+}
+
 phase_services() {
   step "Subindo e verificando serviços"
 
@@ -384,6 +493,8 @@ phase_services() {
     printf 'nameserver 127.0.0.1\n' > /etc/resolv.conf
     ok "/etc/resolv.conf → dnsmasq local"
   fi
+
+  _fix_suricata_iface
 
   # Datastores primeiro (best-effort — a API tem Wants, não Requires).
   start_verify clickhouse-server.service 0 || true
@@ -469,6 +580,20 @@ phase_secrets() {
     warn "falha ao definir senha mestra — use: cd ${MUNDIX_ROOT}/dashboard/backend && ${MUNDIX_VENV}/bin/python -m app.admin reset-master-password"
   fi
 
+  # Usuário 'admin' do painel: a senha mestra NÃO cria usuário (sem isso o
+  # login dá 401). Idempotente — "já existe" é sucesso; nunca falha a fase.
+  local out rc=0
+  out="$(cd "${MUNDIX_ROOT}/dashboard/backend" \
+       && "${MUNDIX_VENV}/bin/python" -m app.admin create-admin admin --password "$pw" 2>&1)" || rc=$?
+  [[ -n "$out" ]] && printf '%s\n' "$out" >>"$LOG"
+  if (( rc == 0 )); then
+    ok "usuário 'admin' do painel criado"
+  elif grep -q "já existe" <<<"$out"; then
+    ok "usuário 'admin' já existe — mantido (senha inalterada)"
+  else
+    warn "falha ao criar o usuário 'admin' — rode depois: cd ${MUNDIX_ROOT}/dashboard/backend && ${MUNDIX_VENV}/bin/python -m app.admin create-admin admin"
+  fi
+
   if [[ -n "$OR_KEY" ]]; then
     step "IA (OpenRouter)"
     local envf="${MUNDIX_ROOT}/configs/openrouter.env"
@@ -513,7 +638,7 @@ phase_report() {
     return 1
   fi
   if (( ${#FAILED_NONCRIT[@]} > 0 )); then
-    warn "Serviços não-críticos com problema: ${FAILED_NONCRIT[*]} (painel funciona; ajuste depois)"
+    warn "Itens não-críticos com problema (pacotes/serviços): ${FAILED_NONCRIT[*]} (painel funciona; ajuste depois)"
   fi
   return 0
 }

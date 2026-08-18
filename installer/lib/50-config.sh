@@ -12,6 +12,18 @@ _seed_file() {  # origem destino [modo]
   ok "config semeada: $dst"
 }
 
+# O mundix-lowpower.xml usa chaves de logs introduzidas depois do 22.3
+# (backup_log, filesystem_cache_log, asynchronous_insert_log,
+# processors_profile_log...). Como CPUs sem AVX são pinadas no 22.3 (ver
+# lib/00-preflight.sh), o seed só é seguro com ClickHouse >= 23 instalado.
+_clickhouse_ge_23() {
+  local ver major
+  ver="$(dpkg-query -W -f='${Version}' clickhouse-server 2>/dev/null)" || return 1
+  major="${ver%%.*}"
+  [[ "$major" =~ ^[0-9]+$ ]] || return 1
+  (( major >= 23 ))
+}
+
 phase_config() {
   step "Configuração base"
   local cfg="${INSTALLER_DIR}/config"
@@ -45,16 +57,32 @@ phase_config() {
     # O 00-global.conf loga em /var/log/dnsmasq/ — sem o diretório o serviço
     # não sobe (o dnsmasq não cria o path sozinho ao abrir o log).
     run install -d -o dnsmasq -g nogroup -m 0755 /var/log/dnsmasq
+    # Upstreams de DNS: o 00-global.conf tem `no-resolv` — sem `server=` o
+    # appliance fica sem resolver nada depois que o first-boot desliga o
+    # systemd-resolved. Semeia defaults públicos, sem sobrescrever o operador.
+    if [[ ! -e /etc/dnsmasq.d/mundix-dns-resolvers.conf ]]; then
+      run bash -c "printf 'server=1.1.1.1\nserver=9.9.9.9\n' > /etc/dnsmasq.d/mundix-dns-resolvers.conf"
+      ok "upstreams DNS semeados: /etc/dnsmasq.d/mundix-dns-resolvers.conf"
+    fi
   fi
 
   # ClickHouse: perfil de baixo consumo (desativa logs de auto-instrumentação
   # de alto churn — crítico no Atom de 2 núcleos). O dir config.d pertence ao
-  # usuário clickhouse, então ajustamos o dono após semear.
+  # usuário clickhouse, então ajustamos o dono após semear. Só semeia com
+  # ClickHouse >= 23: no 22.3 (pin de CPU sem AVX) várias chaves são
+  # desconhecidas e o seed não é seguro.
   if [[ -f "${cfg}/clickhouse/mundix-lowpower.xml" && -d /etc/clickhouse-server/config.d ]]; then
     if [[ ! -e /etc/clickhouse-server/config.d/mundix-lowpower.xml ]]; then
-      _seed_file "${cfg}/clickhouse/mundix-lowpower.xml" \
-        /etc/clickhouse-server/config.d/mundix-lowpower.xml 0640
-      run chown clickhouse:clickhouse /etc/clickhouse-server/config.d/mundix-lowpower.xml
+      if _clickhouse_ge_23; then
+        _seed_file "${cfg}/clickhouse/mundix-lowpower.xml" \
+          /etc/clickhouse-server/config.d/mundix-lowpower.xml 0640
+        # "|| warn": se o ClickHouse ficou meio-instalado (postinst falhou), o
+        # usuário pode não existir — e isso não pode abortar o instalador.
+        run chown clickhouse:clickhouse /etc/clickhouse-server/config.d/mundix-lowpower.xml \
+          || warn "chown do lowpower.xml falhou (usuário clickhouse ausente?)"
+      else
+        log "ClickHouse < 23 (ou versão indetectável): mundix-lowpower.xml NÃO semeado."
+      fi
     fi
   fi
 

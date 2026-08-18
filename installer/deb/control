@@ -4,6 +4,7 @@ Section: net
 Priority: optional
 Architecture: all
 Depends: @DEPS@
+Recommends: @RECOMMENDS@
 Maintainer: Mundix Security 360 <suporte@mundix360.local>
 Homepage: https://github.com/k0k4/mundix360
 Description: Appliance de firewall/IDS/SIEM completo (painel web + CLI)

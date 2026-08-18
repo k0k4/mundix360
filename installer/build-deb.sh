@@ -42,7 +42,12 @@ rsync -a \
 # ---------------------------------------------------------------- DEBIAN -----
 step "Metadados do pacote"
 DEPS="$(printf '%s, ' "${APT_PACKAGES[@]}")"; DEPS="${DEPS%, }"
+# Dados/SIEM (ClickHouse/Valkey) vão como Recommends: um Depends duro faria o
+# `apt install mundix360` abortar se o postinst do ClickHouse falhar (SIGILL em
+# CPU sem AVX). Com Recommends, dá para instalar com --no-install-recommends.
+RECOMMENDS="$(printf '%s, ' "${APT_PACKAGES_NONCRIT[@]}")"; RECOMMENDS="${RECOMMENDS%, }"
 sed -e "s/@VERSION@/${MUNDIX_VERSION}/g" -e "s/@DEPS@/${DEPS}/g" \
+    -e "s/@RECOMMENDS@/${RECOMMENDS}/g" \
   "${INSTALLER_DIR}/deb/control" > "${STAGE}/DEBIAN/control"
 for s in postinst prerm postrm; do
   install -m 0755 "${INSTALLER_DIR}/deb/${s}" "${STAGE}/DEBIAN/${s}"

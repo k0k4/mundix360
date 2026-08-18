@@ -105,6 +105,19 @@ _set_master_password() {
   ( cd "${MUNDIX_ROOT}/dashboard/backend" \
     && run "${MUNDIX_VENV}/bin/python" -m app.admin reset-master-password --password "$pw" ) \
     && ok "senha mestra definida" || warn "falha ao definir senha mestra (use app.admin depois)."
+
+  # Usuário 'admin' do painel: a senha mestra NÃO cria usuário (sem isso o
+  # login dá 401). Idempotente — "já existe" é sucesso; nunca falha a fase.
+  local out rc=0
+  out="$(cd "${MUNDIX_ROOT}/dashboard/backend" \
+    && run "${MUNDIX_VENV}/bin/python" -m app.admin create-admin admin --password "$pw" 2>&1)" || rc=$?
+  if (( rc == 0 )); then
+    ok "usuário 'admin' do painel criado"
+  elif grep -q "já existe" <<<"$out"; then
+    ok "usuário 'admin' já existe — mantido (senha inalterada)"
+  else
+    warn "falha ao criar o usuário 'admin' (${out}) — rode depois: cd ${MUNDIX_ROOT}/dashboard/backend && ${MUNDIX_VENV}/bin/python -m app.admin create-admin admin"
+  fi
 }
 
 _set_openrouter() {

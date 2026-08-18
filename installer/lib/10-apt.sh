@@ -39,4 +39,18 @@ phase_apt() {
   log "instalando ${#APT_PACKAGES[@]} pacotes de topo (+ dependências)"
   run env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${APT_PACKAGES[@]}"
   ok "pacotes instalados"
+
+  # Não-críticos (dados/SIEM): instalados um a um e a falha deles NÃO aborta
+  # a instalação (ex.: ClickHouse >= 22.8 exige AVX — o postinst morre com
+  # SIGILL em CPU sem AVX). Falhas são registradas em FAILED_NONCRIT.
+  local p
+  for p in "${APT_PACKAGES_NONCRIT[@]}"; do
+    if run env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$p"; then
+      ok "pacote não-crítico instalado: ${p}"
+    else
+      warn "pacote não-crítico falhou: ${p} — a instalação continua (ajuste depois)."
+      FAILED_NONCRIT+=("$p")
+    fi
+  done
+  (( ${#FAILED_NONCRIT[@]} == 0 )) || warn "pacotes não-críticos com problema: ${FAILED_NONCRIT[*]}"
 }
