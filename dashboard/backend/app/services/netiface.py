@@ -22,8 +22,10 @@ from the OS config.
 """
 from __future__ import annotations
 
+import fnmatch
 import ipaddress
 import json
+import logging
 import os
 import re
 import shutil
@@ -92,24 +94,26 @@ def _dump(model: dict[str, Any]) -> str:
     return yaml.safe_dump(model, sort_keys=False, default_flow_style=False)
 
 
-def _validate(model: dict[str, Any]) -> tuple[bool, str]:
-    """Validate the candidate config against ALL netplan files (so VLAN parents
-    defined elsewhere still resolve) using `netplan generate --root-dir`."""
+def _validate_tree(candidates: dict[str, str]) -> tuple[bool, str]:
+    """Validate candidate netplan file contents (basename -> content) against
+    ALL netplan files (so VLAN parents defined elsewhere still resolve) using
+    `netplan generate --root-dir`."""
     import tempfile
 
     root = tempfile.mkdtemp(prefix="mundix-netplan-")
     try:
         dst = os.path.join(root, "etc", "netplan")
         os.makedirs(dst, exist_ok=True)
-        managed = os.path.basename(_managed_file())
         for src in _netplan_files():
-            if os.path.basename(src) == managed:
+            base = os.path.basename(src)
+            if base in candidates:
                 continue
-            shutil.copy(src, os.path.join(dst, os.path.basename(src)))
-        cand = os.path.join(dst, managed)
-        with open(cand, "w") as f:
-            f.write(_dump(model))
-        os.chmod(cand, 0o600)
+            shutil.copy(src, os.path.join(dst, base))
+        for base, content in candidates.items():
+            cand = os.path.join(dst, base)
+            with open(cand, "w") as f:
+                f.write(content)
+            os.chmod(cand, 0o600)
         res = shell.run(["netplan", "generate", "--root-dir", root], timeout=30)
         if res.ok:
             return True, ""
@@ -118,8 +122,13 @@ def _validate(model: dict[str, Any]) -> tuple[bool, str]:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def _backup() -> str | None:
-    path = _managed_file()
+def _validate(model: dict[str, Any]) -> tuple[bool, str]:
+    """Validate the candidate managed-file model against ALL netplan files."""
+    return _validate_tree({os.path.basename(_managed_file()): _dump(model)})
+
+
+def _backup_file(path: str) -> str | None:
+    """Timestamped backup of one netplan file (keeps only the 20 most recent)."""
     if not os.path.isfile(path):
         return None
     os.makedirs(settings.netplan_backup_dir, exist_ok=True)
@@ -137,6 +146,10 @@ def _backup() -> str | None:
         except OSError:
             pass
     return dst
+
+
+def _backup() -> str | None:
+    return _backup_file(_managed_file())
 
 
 def _write(path: str, content: str) -> None:
@@ -173,6 +186,154 @@ def _apply_model(model: dict[str, Any]) -> None:
         raise RuntimeError(
             f"netplan apply falhou e a configuração foi revertida"
             f"{f' (backup {backup})' if backup else ''}: {detail}")
+
+
+# -------------------------------------------------- wildcard shadowing -------
+#
+# Bug de campo (LAN volta do reboot em DHCP): um bloco ethernets com `match:
+# {name: enp*}` gera `10-netplan-<chave>.network`; o networkd aplica o PRIMEIRO
+# .network que casa em ordem lexical, então uma chave tipo "all-nics" sombreia
+# `10-netplan-enp6s0.network` e o IP estático da NIC nunca é aplicado no boot.
+
+_SYS_NET = "/sys/class/net"
+_GLOB_CHARS = ("*", "?", "[")
+# Mesma lista do first-boot/menu: nem todo nome de /sys/class/net é NIC física.
+_VIRTUAL_PREFIXES = ("lo", "veth", "docker", "br-", "vnet", "tun", "tap", "wg",
+                     "virbr", "ppp")
+
+
+def _physical_nics() -> list[str]:
+    """NICs físicas presentes (sysfs), excluindo lo, virtuais e sub-interfaces
+    (VLAN/alias com '.' ou '@' — um curinga enp* também casaria com elas)."""
+    try:
+        names = os.listdir(_SYS_NET)
+    except OSError:
+        return []
+    return sorted(n for n in names
+                  if not n.startswith(_VIRTUAL_PREFIXES) and "." not in n and "@" not in n)
+
+
+def _sanitize_wildcard_shadowing(managed_nics: set[str]) -> list[str]:
+    """Reescreve blocos ethernets com `match.name` curinga que sombreiem uma NIC
+    gerenciada (glob casa E a chave do bloco ordena antes do nome da NIC): o
+    curinga é expandido em blocos por nome exato para as NICs físicas presentes
+    que casem com o glob, EXCETO as gerenciadas; as demais opções do bloco são
+    preservadas. Cada arquivo é gravado pelo mesmo fluxo seguro de _apply_model
+    (backup → valida com netplan generate → apply → rollback). Idempotente:
+    sem curinga sombreando, nenhum arquivo é tocado. Retorna as mudanças feitas
+    (também logadas) para auditoria."""
+    changes: list[str] = []
+    for path in _netplan_files():
+        try:
+            with open(path) as f:
+                doc = yaml.safe_load(f) or {}
+        except (OSError, yaml.YAMLError):
+            continue  # arquivo ilegível é problema do strict-load do mutador
+        eth = (doc.get("network") or {}).get("ethernets") or {}
+        new_eth: dict[str, Any] = {}
+        touched = False
+        for key, cfg in eth.items():
+            cfg = cfg or {}
+            pattern = (cfg.get("match") or {}).get("name")
+            shadowed = (
+                isinstance(pattern, str)
+                and any(c in pattern for c in _GLOB_CHARS)
+                and any(fnmatch.fnmatchcase(n, pattern) and key < n
+                        for n in managed_nics)
+            )
+            if not shadowed:
+                new_eth[key] = cfg
+                continue
+            # Expande: um bloco por nome exato para cada NIC presente que case,
+            # exceto as gerenciadas e as já configuradas neste arquivo. Sem
+            # match/set-name: a chave passa a ser o próprio nome da interface.
+            body = {k: v for k, v in cfg.items() if k not in ("match", "set-name")}
+            freed = sorted(n for n in managed_nics if fnmatch.fnmatchcase(n, pattern))
+            expanded = 0
+            for nic in _physical_nics():
+                if nic in managed_nics or nic in eth or nic in new_eth:
+                    continue
+                if fnmatch.fnmatchcase(nic, pattern):
+                    new_eth[nic] = dict(body)
+                    expanded += 1
+            touched = True
+            changes.append(
+                f"{os.path.basename(path)}: curinga '{key}' (match.name={pattern}) "
+                f"expandido em {expanded} bloco(s) por nome exato; NIC(s) "
+                f"gerenciada(s) liberada(s): {', '.join(freed)}")
+        if not touched:
+            continue
+        doc.setdefault("network", {})["ethernets"] = new_eth
+        content = _dump(doc)
+        with open(path) as f:
+            prev = f.read()
+        ok, err = _validate_tree({os.path.basename(path): content})
+        if not ok:
+            raise ValueError(f"netplan rejeitou a sanitização do curinga em {path}: {err}")
+        backup = _backup_file(path)
+        _write(path, content)
+        gen = shell.run(["netplan", "generate"], timeout=30)
+        apply = shell.run(["netplan", "apply"], timeout=45) if gen.ok else gen
+        if not (gen.ok and apply.ok):
+            # roll back deste arquivo e re-aplica a última config boa
+            _write(path, prev)
+            shell.run(["netplan", "apply"], timeout=45)
+            detail = (apply.stderr or apply.stdout or gen.stderr or gen.stdout).strip()
+            raise RuntimeError(
+                f"netplan apply falhou ao sanitizar o curinga em {path} e o arquivo "
+                f"foi revertido{f' (backup {backup})' if backup else ''}: {detail}")
+    for c in changes:
+        logging.getLogger(__name__).warning("netplan sanitizado: %s", c)
+    return changes
+
+
+# ------------------------------------------------------- carrier drop-in -----
+#
+# Agravante do mesmo bug: o networkd NÃO configura IP numa interface sem
+# carrier — uma NIC de zona sem cabo sobe do boot sem o IP estático. O drop-in
+# garante o IP mesmo sem cabo (cenário de recuperação: operador acessa o
+# console, pluga o notebook depois).
+
+_SYSTEMD_NETWORK_DIR = "/etc/systemd/network"
+
+
+def _nocarrier_dropin_path(name: str) -> str:
+    return os.path.join(_SYSTEMD_NETWORK_DIR,
+                        f"10-netplan-{name}.network.d", "10-mundix-nocarrier.conf")
+
+
+def _seed_nocarrier_dropin(name: str) -> None:
+    """Semeia ConfigureWithoutCarrier=true para a NIC (idempotente). Nunca falha
+    a operação de rede por causa do drop-in — só registra o aviso."""
+    content = ("# Gerenciado pelo Mundix360 (netiface): IP presente no boot mesmo sem cabo.\n"
+               "[Network]\nConfigureWithoutCarrier=true\n")
+    path = _nocarrier_dropin_path(name)
+    try:
+        if os.path.isfile(path):
+            with open(path) as f:
+                if f.read() == content:
+                    return
+        os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)
+        with open(path, "w") as f:
+            f.write(content)
+        os.chmod(path, 0o644)
+    except OSError as e:
+        logging.getLogger(__name__).warning(
+            "não foi possível gravar o drop-in sem-carrier de %s: %s", name, e)
+
+
+def _remove_nocarrier_dropin(name: str) -> None:
+    """Remove o drop-in quando a NIC volta para DHCP (evita comportamento surpresa)."""
+    path = _nocarrier_dropin_path(name)
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+        d = os.path.dirname(path)
+        if os.path.isdir(d) and not os.listdir(d):
+            os.rmdir(d)
+    except OSError as e:
+        logging.getLogger(__name__).warning(
+            "não foi possível remover o drop-in sem-carrier de %s: %s", name, e)
 
 
 # ----------------------------------------------------------- descriptions ----
@@ -434,6 +595,9 @@ def set_interface(name: str, *, description: str | None = None,
             if all(v is None for v in (admin_enabled, ipv4_mode, mtu)):
                 return get_interface(name) or {}
 
+        # Antes de gravar a config desta NIC exata, neutraliza qualquer curinga
+        # (match: {name: enp*}) cuja chave a sombrearia no boot.
+        _sanitize_wildcard_shadowing({name})
         model = _load_model(strict=True)
         section, _kind = _section_for(model, name)
         cfg = section.setdefault(name, {})
@@ -466,6 +630,12 @@ def set_interface(name: str, *, description: str | None = None,
                 cfg["dhcp4"] = False
 
         _apply_model(model)
+        # NIC de zona com IP estático precisa assumir o IP no boot mesmo sem
+        # cabo; ao voltar para DHCP o drop-in é removido (evita surpresa).
+        if ipv4_mode == "static":
+            _seed_nocarrier_dropin(name)
+        elif ipv4_mode == "dhcp":
+            _remove_nocarrier_dropin(name)
         # Reflect admin state on the live link immediately.
         if admin_enabled is not None:
             shell.run(["ip", "link", "set", name, "up" if admin_enabled else "down"], timeout=8)
@@ -506,6 +676,9 @@ def create_vlan(*, parent: str, vlan_id: int, name: str | None = None,
         raise ValueError("MTU fora da faixa (576–9216)")
 
     with _lock:
+        # A VLAN declara a NIC pai por nome exato — sanitize curingas que a
+        # sombreariam antes de gravar (mesmo motivo de set_interface).
+        _sanitize_wildcard_shadowing({parent})
         model = _load_model(strict=True)
         vlans = model["network"].setdefault("vlans", {})
         if vname in vlans:

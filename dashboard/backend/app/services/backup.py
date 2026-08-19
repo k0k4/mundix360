@@ -11,11 +11,12 @@ timestamped ``.tar.gz`` with a manifest:
   - Serviços:   units systemd mundix-* (inclusive o template pppoe@)
   - VPN:        /etc/openvpn
   - IDS:        /etc/suricata (configs; regras são rebaixáveis via update)
-  - Dashboard:  backend/data/*.json  +  ai.db (consistent SQLite snapshot)
+  - Dashboard:  backend/data/*.json  +  ai.db e auth.db (snapshots SQLite consistentes)
   - SIEM:       ClickHouse akvorado.siem_alerts (schema + Native dump, gz)
 
 Each archive is auto-verified after creation (tar integrity, SQLite
-integrity_check on the embedded ai.db, ``nft -c`` on the firewall files).
+integrity_check on the embedded ai.db/auth.db, ``nft -c`` on the firewall
+files).
 Restore is deliberately NOT auto-applied from the UI (lock-out risk): archives
 can be listed, created, verified, downloaded, extracted to a staging dir and
 deleted; applying a restore is an operator decision.
@@ -222,6 +223,7 @@ def create_backup() -> dict[str, Any]:
 
     _state["phase"] = "archiving"
     tmp_db = None
+    tmp_auth = None
     try:
         with tarfile.open(tmp_path, "w:gz") as tar:
             # config files
@@ -244,6 +246,16 @@ def create_backup() -> dict[str, Any]:
                 _sqlite_snapshot(settings.ai_db_path, tmp_db)
                 tar.add(tmp_db, arcname="data/ai.db")
                 manifest["contents"].append("data/ai.db")
+            # auth.db consistent snapshot (contas/sessões do painel). Contém
+            # hashes de senha — sensibilidade equivalente às chaves VPN e aos
+            # chap/pap-secrets que o arquivo já carrega (e fica chmod 600).
+            # Sem ele, restaurar um backup deixa o operador trancado fora.
+            if os.path.isfile(settings.auth_db_path):
+                fd, tmp_auth = tempfile.mkstemp(prefix="authdb_", suffix=".db")
+                os.close(fd)
+                _sqlite_snapshot(settings.auth_db_path, tmp_auth)
+                tar.add(tmp_auth, arcname="data/auth.db")
+                manifest["contents"].append("data/auth.db")
             # ClickHouse SIEM history
             if model.get("include_clickhouse", True):
                 _state["phase"] = "clickhouse"
@@ -263,11 +275,12 @@ def create_backup() -> dict[str, Any]:
         except OSError:
             pass
     finally:
-        if tmp_db and os.path.exists(tmp_db):
-            try:
-                os.unlink(tmp_db)
-            except OSError:
-                pass
+        for tmp in (tmp_db, tmp_auth):
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
         if os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
@@ -313,19 +326,20 @@ def verify_backup(name: str) -> dict[str, Any]:
             names = tar.getnames()
             add("integridade do arquivo (tar.gz)", True, f"{len(names)} membros")
             add("manifesto presente", "manifest.json" in names)
-            # SQLite integrity
-            if "data/ai.db" in names:
-                with tempfile.TemporaryDirectory() as td:
-                    tar.extract("data/ai.db", td, filter="data")
-                    dbp = os.path.join(td, "data/ai.db")
-                    try:
-                        con = sqlite3.connect(dbp)
-                        res = con.execute("PRAGMA integrity_check").fetchone()
-                        con.close()
-                        add("integridade do ai.db", res and res[0] == "ok",
-                            res[0] if res else "sem resultado")
-                    except sqlite3.Error as e:
-                        add("integridade do ai.db", False, str(e))
+            # SQLite integrity (ai.db = estado da IA; auth.db = contas/sessões do painel)
+            for arc, label in (("data/ai.db", "ai.db"), ("data/auth.db", "auth.db")):
+                if arc in names:
+                    with tempfile.TemporaryDirectory() as td:
+                        tar.extract(arc, td, filter="data")
+                        dbp = os.path.join(td, arc)
+                        try:
+                            con = sqlite3.connect(dbp)
+                            res = con.execute("PRAGMA integrity_check").fetchone()
+                            con.close()
+                            add(f"integridade do {label}", res and res[0] == "ok",
+                                res[0] if res else "sem resultado")
+                        except sqlite3.Error as e:
+                            add(f"integridade do {label}", False, str(e))
             # ClickHouse dump: decompress fully to catch truncated/partial streams
             if "clickhouse/siem_alerts.native.gz" in names:
                 try:

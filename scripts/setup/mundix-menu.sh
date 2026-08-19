@@ -3,7 +3,8 @@
 # Mundix Security 360 — Menu de console (setup/recuperação, estilo pfSense)
 #
 # Pensado para o console LOCAL do appliance quando a web não está acessível:
-# ver status, consertar rede/firewall, resetar senha mestra, restaurar backup.
+# ver status, consertar rede/firewall, recuperar o acesso ao painel, restaurar
+# backup.
 # Zero dependências além do sistema base (bash, iproute2, systemd, jq opcional).
 #
 # Abre automaticamente no login root do console local (via /etc/profile.d/) ou
@@ -113,8 +114,111 @@ network:
 EOF
   chmod 600 "$NETPLAN_BOOT"
   ok "LAN gravada em $NETPLAN_BOOT (${lan} = ${new_ip})"
+
+  # DHCP estilo pfSense: mesma rota do painel (app.services.network.save_zone).
+  echo
+  local dhcp_resumo="desativado"
+  read -rp "Ativar servidor DHCP nesta interface? [s/N] " want_dhcp
+  if [[ "$want_dhcp" =~ ^[sS]$ ]]; then
+    lan_dhcp_via_painel "$lan" "$new_ip" && dhcp_resumo="$LAN_DHCP_RESUMO" \
+      || dhcp_resumo="${LAN_DHCP_RESUMO:-FALHOU (veja acima)}"
+  fi
+
+  echo
+  echo "--- Resumo ---"
+  echo "  Interface : ${lan}"
+  echo "  IP/máscara: ${new_ip}"
+  echo "  DHCP      : ${dhcp_resumo}"
   warn "NÃO foi aplicado ainda — use a opção 4 (Aplicar rede) quando estiver pronto."
   pause
+}
+
+# ------------------------------------------------ LAN DHCP (via código do painel) ---
+
+# Grava/atualiza a zona 'lan' do dnsmasq chamando o MESMO código do painel
+# (app.services.network.save_zone): escreve /etc/dnsmasq.d/lan.conf, valida com
+# `dnsmasq --test`, reinicia o dnsmasq e re-renderiza o firewall (portas 53/67).
+# NOTA: roda num processo separado do da API — aceitável num console de
+# recuperação, onde não há concorrência real com o painel.
+# Args: <nic> <ip/máscara CIDR> <auto|update>. Saída: "POOL:<ini>-<fim>",
+# "CONFLITO:<iface>" (rc=3) ou nada em caso de erro (rc!=0).
+_lan_zone_save() {
+  (cd "${MUNDIX_ROOT}/dashboard/backend" && /opt/venv/bin/python - "$1" "$2" "$3" <<'PY'
+import ipaddress
+import sys
+
+from app.services import network
+
+nic, cidr, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+addr = ipaddress.ip_interface(cidr)
+ip, mask, net = str(addr.ip), str(addr.network.netmask), addr.network
+
+existing = network.get_zone("lan")
+create = True
+if existing and existing.get("config_present"):
+    cur = existing.get("interface")
+    if cur and cur != nic and mode != "update":
+        print(f"CONFLITO:{cur}")
+        sys.exit(3)
+    create = False
+
+z = {"zone": "lan", "interface": nic, "listen_address": ip, "netmask": mask}
+# Pool: preserva o existente se a sub-rede não mudou; senão deriva pela regra
+# do painel (rede+10 .. broadcast-5; gateway = IP do appliance).
+if (not create and existing.get("dhcp_start") and existing.get("network")
+        and existing["network"] == str(net)):
+    z["dhcp_start"] = existing["dhcp_start"]
+    z["dhcp_end"] = existing["dhcp_end"]
+    if existing.get("gateway"):
+        z["gateway"] = existing["gateway"]
+else:
+    network._lan_dhcp_default(z)
+
+saved = network.save_zone(z, create=create)
+if saved.get("dhcp_start") and saved.get("dhcp_end"):
+    print(f"POOL:{saved['dhcp_start']}-{saved['dhcp_end']}")
+else:
+    print("POOL:")
+PY
+  )
+}
+
+# Pergunta/resolve conflitos e chama _lan_zone_save. Preenche LAN_DHCP_RESUMO.
+lan_dhcp_via_painel() {
+  local lan="$1" cidr="$2"
+  LAN_DHCP_RESUMO=""
+  if [[ ! -x /opt/venv/bin/python ]]; then
+    err "venv não encontrado em /opt/venv — ative o DHCP depois pelo painel."
+    LAN_DHCP_RESUMO="PENDENTE (sem venv — configure pelo painel)"
+    return 1
+  fi
+  local out rc=0
+  out="$(_lan_zone_save "$lan" "$cidr" auto)" || rc=$?
+  if (( rc == 3 )); then
+    local other="${out#CONFLITO:}"
+    warn "a zona 'lan' já existe na interface ${other}."
+    read -rp "Atualizar a zona 'lan' para ${lan}? [s/N] " c
+    if [[ ! "$c" =~ ^[sS]$ ]]; then
+      echo "DHCP não alterado."
+      LAN_DHCP_RESUMO="mantido na interface ${other}"
+      return 1
+    fi
+    rc=0
+    out="$(_lan_zone_save "$lan" "$cidr" update)" || rc=$?
+  fi
+  if (( rc != 0 )); then
+    err "falha ao salvar a zona 'lan' (veja acima)."
+    LAN_DHCP_RESUMO="FALHOU (veja acima)"
+    return 1
+  fi
+  local pool="${out#POOL:}"
+  if [[ -n "$pool" ]]; then
+    ok "zona 'lan' gravada — DHCP ativo em ${lan} (pool ${pool})"
+    LAN_DHCP_RESUMO="ativo em ${lan} (pool ${pool})"
+  else
+    ok "zona 'lan' gravada em ${lan} (sub-rede pequena demais para pool DHCP)"
+    LAN_DHCP_RESUMO="zona gravada em ${lan}, sem pool derivável"
+  fi
 }
 
 act_apply_network() {
@@ -141,13 +245,27 @@ act_apply_network() {
   pause
 }
 
-act_reset_password() {
-  echo "=== Reset da senha mestra do painel ==="
-  if [[ -x "${MUNDIX_ROOT}/scripts/reset-master-password.sh" ]]; then
-    "${MUNDIX_ROOT}/scripts/reset-master-password.sh" || err "falha no reset (veja acima)."
-  else
-    err "scripts/reset-master-password.sh não encontrado."
-  fi
+act_recover_access() {
+  echo "=== Recuperar acesso ao painel ==="
+  echo "1) Senha do admin do painel (login web) — redefine, reativa a conta e revoga sessões"
+  echo "2) Senha mestra da IA (assistente de IA — NÃO é a senha de login)"
+  echo "0) Voltar"
+  read -rp "Escolha: " sub
+  case "$sub" in
+    1)
+      if [[ -x "${MUNDIX_ROOT}/scripts/reset-admin-password.sh" ]]; then
+        "${MUNDIX_ROOT}/scripts/reset-admin-password.sh" || warn "recuperação não concluída (veja acima)."
+      else
+        err "scripts/reset-admin-password.sh não encontrado."
+      fi ;;
+    2)
+      if [[ -x "${MUNDIX_ROOT}/scripts/reset-master-password.sh" ]]; then
+        "${MUNDIX_ROOT}/scripts/reset-master-password.sh" || err "falha no reset (veja acima)."
+      else
+        err "scripts/reset-master-password.sh não encontrado."
+      fi ;;
+    *) ;;
+  esac
   pause
 }
 
@@ -248,9 +366,9 @@ EOF
   cat <<EOF
   1) Status geral (healthcheck + serviços)
   2) Interfaces de rede (links, IPs, papéis, PPPoE)
-  3) Configurar LAN de gestão (netplan)
+  3) Configurar LAN de gestão (IP fixo + DHCP, estilo pfSense)
   4) Aplicar rede / recarregar firewall
-  5) Resetar senha mestra do painel
+  5) Recuperar acesso ao painel (senha do admin)
   6) Reiniciar serviços
   7) Logs
   8) Testes de conectividade
@@ -266,7 +384,7 @@ EOF
     2) act_interfaces ;;
     3) act_config_lan ;;
     4) act_apply_network ;;
-    5) act_reset_password ;;
+    5) act_recover_access ;;
     6) act_restart_services ;;
     7) act_logs ;;
     8) act_connectivity ;;

@@ -82,6 +82,10 @@ trap cleanup EXIT
 log "extraindo para área de staging: $STAGING"
 tar -xzf "$ARCHIVE" -C "$STAGING"
 
+# auth.db (contas/sessões do painel) muda quem consegue logar após o restore.
+HAD_AUTH_DB=0
+[[ -f "$STAGING/data/auth.db" ]] && HAD_AUTH_DB=1 || true
+
 [[ -f "$STAGING/manifest.json" ]] || die "manifest.json ausente — não parece um backup mundix360"
 echo "------------------------------------------------------------"
 python3 - "$STAGING/manifest.json" <<'PY'
@@ -256,4 +260,10 @@ ip route show default | sed 's/^/    /' || true
 echo
 log "snapshot pré-restore (rollback): $SNAP"
 [[ -f "$SNAP.data.tgz" ]] && log "snapshot dos dados do dashboard: $SNAP.data.tgz"
+if [[ $HAD_AUTH_DB -eq 1 ]]; then
+    echo
+    warn "o backup incluía as contas do painel (data/auth.db): as credenciais de login"
+    warn "agora são as da máquina de ORIGEM do backup. Se não souber a senha, recupere"
+    warn "pelo mundix-menu, opção 5 (Recuperar acesso ao painel)."
+fi
 echo "============================================================"
