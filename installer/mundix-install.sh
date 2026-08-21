@@ -354,6 +354,23 @@ phase_config() {
     ok "export instalado (/usr/local/bin/mundix-export)"
   fi
 
+  # Canal de atualizações estáveis (repo APT assinado, só o pacote mundix360).
+  # A sources.list é regravada se divergir (idempotente); sem a chave no repo,
+  # apenas avisa — a ausência do canal não pode abortar a instalação.
+  local repo_key="${cfg}/mundix-repo.gpg"
+  if [[ -f "$repo_key" ]]; then
+    install -m 0644 "$repo_key" /usr/share/keyrings/mundix-repo.gpg
+    local upd_line="deb [signed-by=/usr/share/keyrings/mundix-repo.gpg] https://k0k4.github.io/mundix360-repo stable main"
+    local upd_list=/etc/apt/sources.list.d/mundix360.list
+    if [[ "$(cat "$upd_list" 2>/dev/null || true)" != "$upd_line" ]]; then
+      printf '%s\n' "$upd_line" > "$upd_list"
+      chmod 0644 "$upd_list"
+      ok "canal de atualizações configurado: ${upd_list}"
+    fi
+  else
+    warn "chave do canal de updates ausente (${repo_key}) — canal não semeado"
+  fi
+
   # Encaminhamento de pacotes (firewall roteia entre zonas).
   echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-mundix-forward.conf
   sysctl --system >>"$LOG" 2>&1 || true

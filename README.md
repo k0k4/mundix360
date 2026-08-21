@@ -144,6 +144,21 @@ sudo ./install.sh --online   # baixa os pacotes da internet (requer Ubuntu 24.04
    `mundix360`, **expirada de fábrica** — o primeiro login exige definir senha nova.
 4. Depois refine WAN/LAN, PPPoE, VPNs e regras pelo painel.
 
+## Atualizações
+
+O appliance tem um **canal de atualizações estáveis**: um repositório APT
+assinado, hospedado em GitHub Pages (`https://k0k4.github.io/mundix360-repo`),
+que publica **apenas o pacote `mundix360`** quando sai uma release nova
+(instalação nova continua via ISO/bundle/instalador online). Instalações novas
+já nascem com o canal configurado.
+
+- **Pelo painel**: *Sistema → Atualizações* → **"Verificar atualizações"**
+  (verificação manual) e, havendo versão nova, **"Atualizar agora"**.
+- **Pela CLI**: `sudo scripts/ops/mundix-upgrade.sh --check` (só verifica) ou
+  `sudo scripts/ops/mundix-upgrade.sh` (aplica; log em `/var/log/mundix-upgrade.log`).
+- **Máquinas antigas** (instaladas antes do canal existir): uma única vez,
+  `sudo scripts/ops/mundix-upgrade.sh --setup-channel`.
+
 ## Ferramentas de operação
 
 | Comando | O que faz |
@@ -151,6 +166,7 @@ sudo ./install.sh --online   # baixa os pacotes da internet (requer Ubuntu 24.04
 | `mundix-menu` | Menu de console estilo pfSense: status, rede, senha mestra, logs, restore, energia. Abre sozinho no login root do console local. |
 | `mundix-export start\|stop\|status` | Sobe/derruba um servidor HTTP temporário (porta 8642) expondo `installer/dist/` para download, abrindo e fechando a regra no nftables automaticamente. |
 | `scripts/ops/mundix360-healthcheck.sh` | Verifica serviços, portas e integridade do appliance. |
+| `scripts/ops/mundix-upgrade.sh [--check\|--setup-channel]` | Canal de atualizações estáveis: verifica/aplica a versão publicada no repo APT assinado. |
 | `scripts/ops/mundix-restore.sh <backup.tar.gz>` | Restaura backup por CLI (config, estado e, opcionalmente, dados). |
 | `scripts/reset-master-password.sh` | Reseta a senha mestra do painel. |
 
@@ -178,6 +194,7 @@ cd installer
 sudo ./build-bundle.sh   # bundle offline (.tar.zst com todos os .deb)
 sudo ./build-deb.sh      # pacote mundix360_<versão>_all.deb
 sudo ./build-repo.sh     # repositório APT autocontido, assinado via GPG
+sudo ./build-repo.sh --light  # repo enxuto (só mundix360) — canal de updates
 sudo ./build-iso.sh      # ISO autoinstall (Ubuntu 24.04 + bundle embarcado)
 ```
 

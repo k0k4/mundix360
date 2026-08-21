@@ -205,6 +205,19 @@ cd /opt/mundix360 && sudo ./installer/mundix-install.sh --yes
 
 ## 6. Atualizar o sistema depois
 
+O appliance tem um **canal de atualizações estáveis** (repo APT assinado, só o
+pacote `mundix360`, publicado a cada release). A verificação é manual: no
+painel, vá em **Sistema → Atualizações** e clique em **"Verificar
+atualizações"**; havendo versão nova, aplique com **"Atualizar agora"**. Pela
+CLI, o equivalente é `sudo scripts/ops/mundix-upgrade.sh --check` (verificar) e
+`sudo scripts/ops/mundix-upgrade.sh` (aplicar). Detalhes no README, seção
+"Atualizações". Instalações feitas a partir desta versão já nascem com o canal
+configurado; em máquinas antigas, rode uma vez
+`sudo scripts/ops/mundix-upgrade.sh --setup-channel`.
+
+Se a instalação veio direto do código-fonte (git), a alternativa continua
+valendo:
+
 ```bash
 cd /opt/mundix360
 sudo git pull                       # se veio por git (Opção A)

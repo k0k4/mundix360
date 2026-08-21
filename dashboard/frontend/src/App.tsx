@@ -37,6 +37,7 @@ import {
   SaveOutlined,
   ApartmentOutlined,
   UserOutlined,
+  CloudDownloadOutlined,
 } from "@ant-design/icons";
 import "@refinedev/antd/dist/reset.css";
 
@@ -74,6 +75,7 @@ import { BackupPage } from "./pages/backup";
 import { FlowsPage } from "./pages/flows";
 import { LogsPage } from "./pages/logs";
 import { ServicesPage } from "./pages/system/services";
+import { UpdatesPage } from "./pages/system/updates";
 import { AiConfigPage } from "./pages/ai-config";
 import { LoginPage, SetupPage } from "./pages/login";
 import { UsersPage } from "./pages/users";
@@ -387,6 +389,11 @@ export default function App() {
               meta: { label: "Sistema", icon: <CloudServerOutlined /> },
             },
             {
+              name: "updates",
+              list: "/system/updates",
+              meta: { label: "Atualizações", icon: <CloudDownloadOutlined /> },
+            },
+            {
               name: "backup",
               list: "/system/backup",
               meta: { label: "Backup & Restauração", icon: <SaveOutlined /> },
@@ -474,6 +481,7 @@ export default function App() {
               <Route path="/flows" element={<FlowsPage />} />
               <Route path="/logs" element={<LogsPage />} />
               <Route path="/system" element={<ServicesPage />} />
+              <Route path="/system/updates" element={<UpdatesPage />} />
               <Route path="/system/backup" element={<BackupPage />} />
               <Route path="/system/users" element={<UsersPage />} />
 

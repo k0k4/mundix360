@@ -39,6 +39,9 @@ class Settings(BaseSettings):
 
     # Paths
     base_dir: str = "/opt/mundix360"
+    # Canal de atualizações estáveis (repo APT assinado em GitHub Pages, só o
+    # pacote mundix360). O painel consulta "<update_url>/version".
+    update_url: str = "https://k0k4.github.io/mundix360-repo"
     block_ip_script: str = "/opt/mundix360/scripts/active-response/block-ip.sh"
     dnsmasq_dir: str = "/opt/mundix360/configs/dnsmasq"
     dnsmasq_etc_dir: str = "/etc/dnsmasq.d"
